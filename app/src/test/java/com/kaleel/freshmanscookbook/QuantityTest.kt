@@ -1,5 +1,6 @@
 package com.kaleel.freshmanscookbook
 
+import com.kaleel.freshmanscookbook.data.normalizeFoodSearchName
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -16,5 +17,9 @@ class QuantityTest {
         assertEquals("1/4", formatQuantity(.25))
         assertEquals("1/2", formatQuantity(.5))
         assertEquals("2", formatQuantity(2.0))
+    }
+
+    @Test fun normalizesFoodNamesForSearch() {
+        assertEquals("creme fraiche and herbs", normalizeFoodSearchName("Crème fraîche & herbs"))
     }
 }
