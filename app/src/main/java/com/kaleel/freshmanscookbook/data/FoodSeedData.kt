@@ -136,15 +136,15 @@ object FoodSeedData {
      * from the source dataset rather than being guessed here.
      */
     val commonUnitLabels: Map<IngredientUnit, List<String>> = mapOf(
-        IngredientUnit.GRAM to listOf("g", "gram", "grams"),
-        IngredientUnit.KILOGRAM to listOf("kg", "kilogram", "kilograms"),
-        IngredientUnit.MILLILITER to listOf("ml", "milliliter", "milliliters"),
-        IngredientUnit.LITER to listOf("l", "liter", "liters"),
-        IngredientUnit.TEASPOON to listOf("tsp", "teaspoon", "teaspoons"),
-        IngredientUnit.TABLESPOON to listOf("tbsp", "tablespoon", "tablespoons"),
+        IngredientUnit.G to listOf("g", "gram", "grams"),
+        IngredientUnit.KG to listOf("kg", "kilogram", "kilograms"),
+        IngredientUnit.ML to listOf("ml", "milliliter", "milliliters"),
+        IngredientUnit.L to listOf("l", "liter", "liters"),
+        IngredientUnit.TSP to listOf("tsp", "teaspoon", "teaspoons"),
+        IngredientUnit.TBSP to listOf("tbsp", "tablespoon", "tablespoons"),
         IngredientUnit.CUP to listOf("cup", "cups"),
-        IngredientUnit.OUNCE to listOf("oz", "ounce", "ounces"),
-        IngredientUnit.POUND to listOf("lb", "pound", "pounds"),
+        IngredientUnit.OZ to listOf("oz", "ounce", "ounces"),
+        IngredientUnit.LB to listOf("lb", "pound", "pounds"),
         IngredientUnit.PIECE to listOf("piece", "pieces")
     )
 }

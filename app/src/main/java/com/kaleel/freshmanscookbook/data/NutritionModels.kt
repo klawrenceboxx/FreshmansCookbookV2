@@ -32,6 +32,7 @@ data class FoodEntity(
     val carbohydrateG: Double?,
     val fatG: Double?,
     val fiberG: Double?,
+    val totalSugarsG: Double?,
 
     // Minerals, per 100 g
     val calciumMg: Double?,
@@ -56,6 +57,7 @@ data class FoodEntity(
     val niacinB3Mg: Double?,
     val pantothenicAcidB5Mg: Double?,
     val vitaminB6Mg: Double?,
+    val folateMcg: Double?,
     val folateMcgDfe: Double?,
     val vitaminB12Mcg: Double?,
     val cholineMg: Double?,
@@ -144,6 +146,7 @@ data class NutritionTotals(
     val carbohydrateG: Double = 0.0,
     val fatG: Double = 0.0,
     val fiberG: Double = 0.0,
+    val totalSugarsG: Double = 0.0,
     val calciumMg: Double = 0.0,
     val ironMg: Double = 0.0,
     val magnesiumMg: Double = 0.0,
@@ -164,6 +167,7 @@ data class NutritionTotals(
     val niacinB3Mg: Double = 0.0,
     val pantothenicAcidB5Mg: Double = 0.0,
     val vitaminB6Mg: Double = 0.0,
+    val folateMcg: Double = 0.0,
     val folateMcgDfe: Double = 0.0,
     val vitaminB12Mcg: Double = 0.0,
     val cholineMg: Double = 0.0,
