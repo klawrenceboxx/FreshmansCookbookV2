@@ -12,7 +12,9 @@ data class IngredientDraft(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "",
     val quantityText: String = "",
-    val unit: IngredientUnit = IngredientUnit.NONE
+    val unit: IngredientUnit = IngredientUnit.NONE,
+    val foodId: String? = null,
+    val gramsEquivalent: Double? = null
 )
 
 data class StepDraft(val id: String = UUID.randomUUID().toString(), val text: String = "")
@@ -29,7 +31,9 @@ data class RecipeDraft(
 )
 
 class CookbookViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = (application as CookbookApplication).repository
+    private val cookbookApplication = application as CookbookApplication
+    private val repository = cookbookApplication.repository
+    private val foodRepository = cookbookApplication.foodRepository
     val recipes = repository.recipes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _draft = MutableStateFlow(RecipeDraft())
     val draft = _draft.asStateFlow()
@@ -44,7 +48,9 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
             category = recipe.category,
             servingsText = recipe.servings.toString(),
             imagePath = recipe.imagePath,
-            ingredients = recipe.ingredients.map { IngredientDraft(it.id, it.name, formatQuantity(it.quantity), it.unit) },
+            ingredients = recipe.ingredients.map {
+                IngredientDraft(it.id, it.name, formatQuantity(it.quantity), it.unit, it.foodId, it.gramsEquivalent)
+            },
             steps = recipe.steps.map { StepDraft(it.id, it.text) },
             createdAt = recipe.createdAt
         )
@@ -55,15 +61,26 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     suspend fun save(): String {
         val d = draft.value
         val now = System.currentTimeMillis()
+        val ingredients = mutableListOf<Ingredient>()
+        d.ingredients.filter { it.name.isNotBlank() }.forEachIndexed { index, item ->
+            val quantity = parseQuantity(item.quantityText)
+            ingredients += Ingredient(
+                id = item.id,
+                name = item.name.trim(),
+                quantity = quantity,
+                unit = item.unit,
+                order = index,
+                foodId = item.foodId,
+                gramsEquivalent = foodRepository.gramsFor(item.foodId, quantity, item.unit)
+            )
+        }
         repository.save(Recipe(
             id = d.id,
             name = d.name.trim(),
             category = requireNotNull(d.category),
             servings = d.servingsText.toIntOrNull()?.coerceAtLeast(1) ?: 2,
             imagePath = d.imagePath,
-            ingredients = d.ingredients.filter { it.name.isNotBlank() }.mapIndexed { i, it ->
-                Ingredient(it.id, it.name.trim(), parseQuantity(it.quantityText), it.unit, i)
-            },
+            ingredients = ingredients,
             steps = d.steps.filter { it.text.isNotBlank() }.mapIndexed { i, it -> RecipeStep(it.id, it.text.trim(), i) },
             createdAt = d.createdAt,
             updatedAt = now
@@ -72,6 +89,8 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun delete(id: String) { viewModelScope.launch { repository.delete(id) } }
+
+    suspend fun searchFoods(query: String): List<FoodEntity> = foodRepository.search(query)
 }
 
 fun parseQuantity(raw: String): Double? {

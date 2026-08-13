@@ -28,6 +28,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.kaleel.freshmanscookbook.*
 import com.kaleel.freshmanscookbook.data.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -75,7 +76,7 @@ fun EditorScreen(viewModel: CookbookViewModel, onClose: () -> Unit, onSaved: (St
             EditorProgress(page, onStep = { if (it < page) page = it })
             when (page) {
                 0 -> BasicsStep(draft, viewModel::updateDraft)
-                1 -> IngredientsStep(draft, viewModel::updateDraft)
+                1 -> IngredientsStep(draft, viewModel, viewModel::updateDraft)
                 2 -> StepsStep(draft, viewModel::updateDraft)
                 else -> ReviewStep(draft, onEdit = { page = it })
             }
@@ -152,13 +153,18 @@ private fun BasicsStep(draft: RecipeDraft, update: ((RecipeDraft) -> RecipeDraft
 }
 
 @Composable
-private fun IngredientsStep(draft: RecipeDraft, update: ((RecipeDraft) -> RecipeDraft) -> Unit) {
+private fun IngredientsStep(
+    draft: RecipeDraft,
+    viewModel: CookbookViewModel,
+    update: ((RecipeDraft) -> RecipeDraft) -> Unit
+) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         SectionIntro("Build your ingredient list", "Keep each item separate so it’s easy to scan at the stove.")
         draft.ingredients.forEachIndexed { index, ingredient ->
             IngredientEditor(
                 number = index + 1,
                 item = ingredient,
+                viewModel = viewModel,
                 canMoveUp = index > 0,
                 canMoveDown = index < draft.ingredients.lastIndex,
                 onChange = { changed -> update { it.copy(ingredients = it.ingredients.toMutableList().apply { set(index, changed) }) } },
@@ -180,6 +186,7 @@ private fun IngredientsStep(draft: RecipeDraft, update: ((RecipeDraft) -> Recipe
 private fun IngredientEditor(
     number: Int,
     item: IngredientDraft,
+    viewModel: CookbookViewModel,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onChange: (IngredientDraft) -> Unit,
@@ -194,7 +201,7 @@ private fun IngredientEditor(
                 IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Icons.Rounded.KeyboardArrowDown, "Move down") }
                 IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteOutline, "Delete", tint = Muted) }
             }
-            OutlinedTextField(item.name, { onChange(item.copy(name = it)) }, label = { Text("Ingredient name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            FoodAutocompleteField(item = item, viewModel = viewModel, onChange = onChange)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
                     item.quantityText,
@@ -209,6 +216,62 @@ private fun IngredientEditor(
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf("1/4", "1/3", "1/2", "2/3", "3/4").forEach { fraction ->
                     SuggestionChip(onClick = { onChange(item.copy(quantityText = fraction)) }, label = { Text(fraction) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FoodAutocompleteField(
+    item: IngredientDraft,
+    viewModel: CookbookViewModel,
+    onChange: (IngredientDraft) -> Unit
+) {
+    var suggestions by remember(item.id) { mutableStateOf(emptyList<FoodEntity>()) }
+    LaunchedEffect(item.name, item.foodId) {
+        suggestions = emptyList()
+        if (item.foodId == null && item.name.trim().length >= 2) {
+            delay(180)
+            suggestions = viewModel.searchFoods(item.name)
+        }
+    }
+
+    Column {
+        OutlinedTextField(
+            value = item.name,
+            onValueChange = { onChange(item.copy(name = it, foodId = null, gramsEquivalent = null)) },
+            label = { Text("Ingredient name") },
+            singleLine = true,
+            trailingIcon = {
+                if (item.foodId != null) Icon(Icons.Rounded.CheckCircle, "Matched to USDA food", tint = Herb)
+            },
+            supportingText = if (item.foodId != null) ({ Text("USDA Foundation food", color = Herb) }) else null,
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (suggestions.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                tonalElevation = 3.dp,
+                shadowElevation = 3.dp,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+            ) {
+                Column {
+                    suggestions.take(6).forEach { food ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                onChange(item.copy(name = food.name, foodId = food.foodId, gramsEquivalent = null))
+                                suggestions = emptyList()
+                            }.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(food.name, style = MaterialTheme.typography.bodyMedium)
+                                Text(food.category.name.replace('_', ' ').lowercase(), style = MaterialTheme.typography.labelMedium, color = Muted)
+                            }
+                            Text("USDA", style = MaterialTheme.typography.labelMedium, color = Herb)
+                        }
+                    }
                 }
             }
         }

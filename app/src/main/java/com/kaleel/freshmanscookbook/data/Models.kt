@@ -76,5 +76,13 @@ data class Recipe(
     val updatedAt: Long
 )
 
-data class Ingredient(val id: String, val name: String, val quantity: Double?, val unit: IngredientUnit, val order: Int)
+data class Ingredient(
+    val id: String,
+    val name: String,
+    val quantity: Double?,
+    val unit: IngredientUnit,
+    val order: Int,
+    val foodId: String? = null,
+    val gramsEquivalent: Double? = null
+)
 data class RecipeStep(val id: String, val text: String, val order: Int)
