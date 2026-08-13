@@ -1,0 +1,551 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "76490cc5252efc6a5d1d1aa69177b9c4",
+    "entities": [
+      {
+        "tableName": "recipes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `category` TEXT NOT NULL, `servings` INTEGER NOT NULL, `imagePath` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "servings",
+            "columnName": "servings",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "imagePath",
+            "columnName": "imagePath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "ingredients",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `recipeId` TEXT NOT NULL, `name` TEXT NOT NULL, `quantity` REAL, `unit` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `foodId` TEXT, `gramsEquivalent` REAL, `nutritionPer100gJson` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`recipeId`) REFERENCES `recipes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recipeId",
+            "columnName": "recipeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quantity",
+            "columnName": "quantity",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "foodId",
+            "columnName": "foodId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "gramsEquivalent",
+            "columnName": "gramsEquivalent",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "nutritionPer100gJson",
+            "columnName": "nutritionPer100gJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ingredients_recipeId",
+            "unique": false,
+            "columnNames": [
+              "recipeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ingredients_recipeId` ON `${TABLE_NAME}` (`recipeId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "recipes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "recipeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "steps",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `recipeId` TEXT NOT NULL, `text` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`recipeId`) REFERENCES `recipes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recipeId",
+            "columnName": "recipeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_steps_recipeId",
+            "unique": false,
+            "columnNames": [
+              "recipeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_steps_recipeId` ON `${TABLE_NAME}` (`recipeId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "recipes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "recipeId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "foods",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`foodId` TEXT NOT NULL, `name` TEXT NOT NULL, `searchName` TEXT NOT NULL, `category` TEXT NOT NULL, `caloriesKcal` REAL, `proteinG` REAL, `carbohydrateG` REAL, `fatG` REAL, `fiberG` REAL, `totalSugarsG` REAL, `calciumMg` REAL, `ironMg` REAL, `magnesiumMg` REAL, `phosphorusMg` REAL, `potassiumMg` REAL, `sodiumMg` REAL, `zincMg` REAL, `copperMg` REAL, `manganeseMg` REAL, `seleniumMcg` REAL, `vitaminAMcgRae` REAL, `vitaminCMg` REAL, `vitaminDMcg` REAL, `vitaminEMg` REAL, `vitaminKMcg` REAL, `thiaminB1Mg` REAL, `riboflavinB2Mg` REAL, `niacinB3Mg` REAL, `pantothenicAcidB5Mg` REAL, `vitaminB6Mg` REAL, `folateMcg` REAL, `folateMcgDfe` REAL, `vitaminB12Mcg` REAL, `cholineMg` REAL, `saturatedFatG` REAL, `monounsaturatedFatG` REAL, `polyunsaturatedFatG` REAL, `cholesterolMg` REAL, `source` TEXT NOT NULL, `sourceFoodId` TEXT, PRIMARY KEY(`foodId`))",
+        "fields": [
+          {
+            "fieldPath": "foodId",
+            "columnName": "foodId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "searchName",
+            "columnName": "searchName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caloriesKcal",
+            "columnName": "caloriesKcal",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "proteinG",
+            "columnName": "proteinG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "carbohydrateG",
+            "columnName": "carbohydrateG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "fatG",
+            "columnName": "fatG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "fiberG",
+            "columnName": "fiberG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "totalSugarsG",
+            "columnName": "totalSugarsG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "calciumMg",
+            "columnName": "calciumMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "ironMg",
+            "columnName": "ironMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "magnesiumMg",
+            "columnName": "magnesiumMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "phosphorusMg",
+            "columnName": "phosphorusMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "potassiumMg",
+            "columnName": "potassiumMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "sodiumMg",
+            "columnName": "sodiumMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "zincMg",
+            "columnName": "zincMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "copperMg",
+            "columnName": "copperMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "manganeseMg",
+            "columnName": "manganeseMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "seleniumMcg",
+            "columnName": "seleniumMcg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminAMcgRae",
+            "columnName": "vitaminAMcgRae",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminCMg",
+            "columnName": "vitaminCMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminDMcg",
+            "columnName": "vitaminDMcg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminEMg",
+            "columnName": "vitaminEMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminKMcg",
+            "columnName": "vitaminKMcg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "thiaminB1Mg",
+            "columnName": "thiaminB1Mg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "riboflavinB2Mg",
+            "columnName": "riboflavinB2Mg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "niacinB3Mg",
+            "columnName": "niacinB3Mg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pantothenicAcidB5Mg",
+            "columnName": "pantothenicAcidB5Mg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminB6Mg",
+            "columnName": "vitaminB6Mg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "folateMcg",
+            "columnName": "folateMcg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "folateMcgDfe",
+            "columnName": "folateMcgDfe",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "vitaminB12Mcg",
+            "columnName": "vitaminB12Mcg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cholineMg",
+            "columnName": "cholineMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "saturatedFatG",
+            "columnName": "saturatedFatG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "monounsaturatedFatG",
+            "columnName": "monounsaturatedFatG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "polyunsaturatedFatG",
+            "columnName": "polyunsaturatedFatG",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cholesterolMg",
+            "columnName": "cholesterolMg",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceFoodId",
+            "columnName": "sourceFoodId",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "foodId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_foods_name",
+            "unique": false,
+            "columnNames": [
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_foods_name` ON `${TABLE_NAME}` (`name`)"
+          },
+          {
+            "name": "index_foods_searchName",
+            "unique": false,
+            "columnNames": [
+              "searchName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_foods_searchName` ON `${TABLE_NAME}` (`searchName`)"
+          }
+        ]
+      },
+      {
+        "tableName": "food_aliases",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `alias` TEXT NOT NULL, `foodId` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "alias",
+            "columnName": "alias",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "foodId",
+            "columnName": "foodId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_food_aliases_alias",
+            "unique": true,
+            "columnNames": [
+              "alias"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_food_aliases_alias` ON `${TABLE_NAME}` (`alias`)"
+          },
+          {
+            "name": "index_food_aliases_foodId",
+            "unique": false,
+            "columnNames": [
+              "foodId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_food_aliases_foodId` ON `${TABLE_NAME}` (`foodId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "food_portions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `foodId` TEXT NOT NULL, `unit` TEXT NOT NULL, `description` TEXT, `gramsPerUnit` REAL NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "foodId",
+            "columnName": "foodId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unit",
+            "columnName": "unit",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "gramsPerUnit",
+            "columnName": "gramsPerUnit",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_food_portions_foodId",
+            "unique": false,
+            "columnNames": [
+              "foodId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_food_portions_foodId` ON `${TABLE_NAME}` (`foodId`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '76490cc5252efc6a5d1d1aa69177b9c4')"
+    ]
+  }
+}
