@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,7 +22,7 @@ import com.kaleel.freshmanscookbook.data.Recipe
 import com.kaleel.freshmanscookbook.data.RecipeCategory
 
 @Composable
-fun HomeScreen(viewModel: CookbookViewModel, onAdd: () -> Unit, onOpen: (String) -> Unit) {
+fun HomeScreen(viewModel: CookbookViewModel, onAdd: () -> Unit, onOpen: (String) -> Unit, onProfile: () -> Unit) {
     val recipes by viewModel.recipes.collectAsState()
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
     val shown = recipes.filter { selected == null || it.category.name == selected }
@@ -41,7 +42,10 @@ fun HomeScreen(viewModel: CookbookViewModel, onAdd: () -> Unit, onOpen: (String)
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("Recipes", style = MaterialTheme.typography.displaySmall)
-                if (recipes.isEmpty()) IconButton(onClick = onAdd) { Icon(Icons.Rounded.Add, "Add recipe", tint = Herb) }
+                Row {
+                    IconButton(onClick = onProfile) { Icon(Icons.Rounded.AccountCircle, "My day", tint = Herb) }
+                    if (recipes.isEmpty()) IconButton(onClick = onAdd) { Icon(Icons.Rounded.Add, "Add recipe", tint = Herb) }
+                }
             }
             CategoryStrip(selected, onSelect = { selected = it })
             if (shown.isEmpty()) {

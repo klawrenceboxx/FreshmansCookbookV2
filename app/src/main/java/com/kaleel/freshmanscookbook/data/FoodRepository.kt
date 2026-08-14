@@ -28,6 +28,13 @@ class FoodRepository(
         return if (normalized.length < 2) emptyList() else dao.search(normalized, limit)
     }
 
+    /** Resolve linked foods in one Room query for recipe/meal nutrition. */
+    suspend fun getByIds(foodIds: Collection<String>): List<FoodEntity> {
+        ensureSeeded()
+        val ids = foodIds.filter(String::isNotBlank).distinct()
+        return if (ids.isEmpty()) emptyList() else dao.getByIds(ids)
+    }
+
     /** Resolve an entered ingredient amount to grams without guessing volume. */
     suspend fun gramsFor(foodId: String?, quantity: Double?, unit: IngredientUnit): Double? {
         if (quantity == null || quantity < 0) return null

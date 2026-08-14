@@ -15,7 +15,8 @@ fun CookbookApp(viewModel: CookbookViewModel) {
             HomeScreen(
                 viewModel = viewModel,
                 onAdd = { nav.navigate("editor/new") },
-                onOpen = { nav.navigate("detail/$it") }
+                onOpen = { nav.navigate("detail/$it") },
+                onProfile = { nav.navigate("profile") }
             )
         }
         composable(
@@ -52,8 +53,30 @@ fun CookbookApp(viewModel: CookbookViewModel) {
                 recipeId = id,
                 viewModel = viewModel,
                 onBack = { nav.popBackStack() },
-                onEdit = { nav.navigate("editor/$id") },
-                onDeleted = { nav.popBackStack("home", inclusive = false) }
+                onEdit = { viewModel.endMeal(id); nav.navigate("editor/$id") },
+                onDeleted = { nav.popBackStack("home", inclusive = false) },
+                onForecast = { nav.navigate("forecast") }
+            )
+        }
+        composable("profile") {
+            ProfileScreen(
+                viewModel = viewModel,
+                onBack = { nav.popBackStack() },
+                onAddFood = { nav.navigate("add-food") }
+            )
+        }
+        composable("add-food") {
+            AddFoodScreen(
+                viewModel = viewModel,
+                onBack = { nav.popBackStack() },
+                onLogged = { nav.popBackStack() }
+            )
+        }
+        composable("forecast") {
+            ForecastScreen(
+                viewModel = viewModel,
+                onBack = { nav.popBackStack() },
+                onPinned = { nav.popBackStack() }
             )
         }
     }

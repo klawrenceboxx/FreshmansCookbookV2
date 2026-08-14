@@ -5,7 +5,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kaleel.freshmanscookbook.data.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 
 data class IngredientDraft(
@@ -30,13 +34,69 @@ data class RecipeDraft(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+data class DayBounds(val start: Long, val end: Long)
+
+enum class MealLogState { IDLE, SAVING, SAVED, ERROR }
+
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class CookbookViewModel(application: Application) : AndroidViewModel(application) {
     private val cookbookApplication = application as CookbookApplication
     private val repository = cookbookApplication.repository
     private val foodRepository = cookbookApplication.foodRepository
+    private val mealLogRepository = cookbookApplication.mealLogRepository
+    private val foodLogRepository = cookbookApplication.foodLogRepository
+    private val dailyNutritionRepository = cookbookApplication.dailyNutritionRepository
+    private val profileRepository = cookbookApplication.profileRepository
     val recipes = repository.recipes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _draft = MutableStateFlow(RecipeDraft())
     val draft = _draft.asStateFlow()
+
+    val profile = profileRepository.profile
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val profileNutrition = profileRepository.nutritionState
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private val dayBounds = MutableStateFlow(localDayBounds())
+    val dailyNutrition = dayBounds.flatMapLatest { bounds ->
+        dailyNutritionRepository.observeBetween(bounds.start, bounds.end)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        DailyNutritionSnapshot(dayBounds.value.start, dayBounds.value.end, emptyList(), emptyList(), NutritionTotals())
+    )
+
+    private val _meal = MutableStateFlow<MealInstance?>(null)
+    val meal = _meal.asStateFlow()
+    private val _mealFoods = MutableStateFlow<Map<String, FoodEntity>>(emptyMap())
+    val mealFoods = _mealFoods.asStateFlow()
+    private val _pinnedNutrient = MutableStateFlow<NutrientKey?>(null)
+    val pinnedNutrient = _pinnedNutrient.asStateFlow()
+    private val _mealLogState = MutableStateFlow(MealLogState.IDLE)
+    val mealLogState = _mealLogState.asStateFlow()
+
+    val recipeNutrition = combine(_meal, _mealFoods) { currentMeal, foods ->
+        currentMeal?.let { MealNutritionCalculator.plannedTotals(it, foods) } ?: NutritionTotals()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutritionTotals())
+
+    val forecast = combine(dailyNutrition, _meal, _mealFoods, profileNutrition) { day, currentMeal, foods, profileState ->
+        currentMeal?.let { NutritionForecast.calculate(day.totals, it, foods, profileState?.targets) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val pinnedContributions = combine(_meal, _mealFoods, _pinnedNutrient) { currentMeal, foods, nutrient ->
+        if (currentMeal == null || nutrient == null) emptyList()
+        else MealNutritionCalculator.rankedContributions(currentMeal, foods, nutrient)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    init {
+        // Keep an open dashboard aligned with the device's calendar day.
+        viewModelScope.launch {
+            while (isActive) {
+                val bounds = localDayBounds()
+                dayBounds.value = bounds
+                delay((bounds.end - System.currentTimeMillis()).coerceAtLeast(1_000L) + 1_000L)
+            }
+        }
+    }
 
     fun startNew() { _draft.value = RecipeDraft() }
 
@@ -91,6 +151,101 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     fun delete(id: String) { viewModelScope.launch { repository.delete(id) } }
 
     suspend fun searchFoods(query: String): List<FoodEntity> = foodRepository.search(query)
+
+    fun beginMeal(recipe: Recipe) {
+        if (_meal.value?.recipeId == recipe.id) return
+        _meal.value = MealInstance.fromRecipe(recipe)
+        _mealLogState.value = MealLogState.IDLE
+        viewModelScope.launch { refreshMealFoods() }
+    }
+
+    fun endMeal(recipeId: String) {
+        if (_meal.value?.recipeId == recipeId) {
+            _meal.value = null
+            _mealFoods.value = emptyMap()
+            _pinnedNutrient.value = null
+            _mealLogState.value = MealLogState.IDLE
+        }
+    }
+
+    fun toggleMealIngredient(id: String) {
+        _meal.update { it?.let { meal -> MealSession.toggleChecked(meal, id) } }
+        _mealLogState.value = MealLogState.IDLE
+    }
+
+    fun resetMealChecks() { _meal.update { it?.let(MealSession::resetChecked) } }
+    fun checkAllMealIngredients() { _meal.update { it?.let(MealSession::checkAll) } }
+
+    fun updateMealAmount(id: String, quantityText: String, unit: IngredientUnit) {
+        val quantity = parseQuantity(quantityText)
+        val ingredient = _meal.value?.ingredients?.firstOrNull { it.id == id } ?: return
+        viewModelScope.launch {
+            val grams = foodRepository.gramsFor(ingredient.foodId, quantity, unit)
+            _meal.update { it?.let { meal -> MealSession.updateAmount(meal, id, quantity, unit, grams) } }
+            _mealLogState.value = MealLogState.IDLE
+        }
+    }
+
+    fun quickAddIngredient(name: String, quantityText: String, unit: IngredientUnit, food: FoodEntity?) {
+        val quantity = parseQuantity(quantityText)
+        viewModelScope.launch {
+            val grams = foodRepository.gramsFor(food?.foodId, quantity, unit)
+            _meal.update { it?.let { meal -> MealSession.quickAdd(meal, name, quantity, unit, food?.foodId, grams) } }
+            refreshMealFoods()
+            _mealLogState.value = MealLogState.IDLE
+        }
+    }
+
+    fun removeQuickAddedIngredient(id: String) {
+        _meal.update { it?.let { meal -> MealSession.removeIngredient(meal, id) } }
+    }
+
+    fun setServingsConsumed(raw: String) {
+        raw.toDoubleOrNull()?.takeIf { it > 0 }?.let { value ->
+            _meal.update { it?.let { meal -> MealSession.setServingsConsumed(meal, value) } }
+        }
+    }
+
+    fun pinNutrient(nutrient: NutrientKey?) { _pinnedNutrient.value = nutrient }
+
+    fun logCurrentMeal() {
+        val current = _meal.value ?: return
+        if (current.checkedIngredientIds.isEmpty() || current.servingsConsumed <= 0 || _mealLogState.value == MealLogState.SAVING) return
+        viewModelScope.launch {
+            _mealLogState.value = MealLogState.SAVING
+            _mealLogState.value = runCatching { mealLogRepository.logMeal(current) }
+                .fold(onSuccess = { refreshDay(); MealLogState.SAVED }, onFailure = { MealLogState.ERROR })
+        }
+    }
+
+    suspend fun saveProfile(profile: NutritionProfile) {
+        profileRepository.saveProfile(profile)
+        refreshDay()
+    }
+
+    suspend fun logFood(food: FoodEntity, quantityText: String, unit: IngredientUnit): Boolean {
+        val quantity = parseQuantity(quantityText) ?: return false
+        val grams = foodRepository.gramsFor(food.foodId, quantity, unit) ?: return false
+        return runCatching {
+            foodLogRepository.logFood(FoodLogDraft(food.foodId, food.name, quantity, unit, grams))
+            refreshDay()
+        }.isSuccess
+    }
+
+    private suspend fun refreshMealFoods() {
+        val ids = _meal.value?.ingredients?.mapNotNull { it.foodId }.orEmpty()
+        _mealFoods.value = foodRepository.getByIds(ids).associateBy { it.foodId }
+    }
+
+    fun refreshDay() { dayBounds.value = localDayBounds() }
+
+    companion object {
+        fun localDayBounds(date: LocalDate = LocalDate.now(), zone: ZoneId = ZoneId.systemDefault()): DayBounds {
+            val start = date.atStartOfDay(zone).toInstant().toEpochMilli()
+            val end = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            return DayBounds(start, end)
+        }
+    }
 }
 
 fun parseQuantity(raw: String): Double? {
