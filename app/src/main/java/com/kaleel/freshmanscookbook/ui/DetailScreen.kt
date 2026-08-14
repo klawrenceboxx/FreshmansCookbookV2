@@ -255,7 +255,12 @@ private fun QuickAddDialog(viewModel: CookbookViewModel, onDismiss: () -> Unit) 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(name, { name = it; selected = null }, label = { Text("Ingredient") }, singleLine = true)
                 suggestions.take(4).forEach { food ->
-                    TextButton(onClick = { selected = food; name = food.name; suggestions = emptyList() }, modifier = Modifier.fillMaxWidth()) { Text(food.name, modifier = Modifier.fillMaxWidth()) }
+                    TextButton(onClick = { selected = food; name = food.userFacingName; suggestions = emptyList() }, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(food.userFacingName)
+                            if (food.userFacingName != food.name) Text(food.name, color = Muted, style = MaterialTheme.typography.labelSmall, maxLines = 2)
+                        }
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(quantity, { quantity = it }, label = { Text("Amount") }, singleLine = true, modifier = Modifier.weight(1f))

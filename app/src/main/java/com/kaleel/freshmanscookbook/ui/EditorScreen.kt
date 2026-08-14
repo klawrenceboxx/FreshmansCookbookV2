@@ -10,6 +10,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,8 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -70,7 +73,7 @@ fun EditorScreen(viewModel: CookbookViewModel, onClose: () -> Unit, onSaved: (St
                         current.copy(ingredients = current.ingredients.map { ingredient ->
                             if (ingredient.id != request.ingredientId) ingredient
                             else ingredient.copy(
-                                name = saved.food.name,
+                                name = saved.displayName,
                                 foodId = saved.food.foodId,
                                 foodSource = FoodSource.CUSTOM,
                                 quantityText = ingredient.quantityText.ifBlank { formatQuantity(saved.customFood?.servingQuantity) },
@@ -219,29 +222,57 @@ private fun IngredientsStep(
     var focusId by remember { mutableStateOf<String?>(null) }
     var draggingId by remember { mutableStateOf<String?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    val moveThreshold = with(LocalDensity.current) { 52.dp.toPx() }
+    var dragSourceIndex by remember { mutableIntStateOf(-1) }
+    var dragTargetIndex by remember { mutableIntStateOf(-1) }
+    var dragStartPointerY by remember { mutableFloatStateOf(0f) }
+    var dragBoundsSnapshot by remember { mutableStateOf<Map<String, Pair<Float, Float>>>(emptyMap()) }
+    val rowBounds = remember(draft.id) { mutableStateMapOf<String, Pair<Float, Float>>() }
+    val handleCenters = remember(draft.id) { mutableStateMapOf<String, Float>() }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            SectionIntro("Ingredients", "Build a compact list, then open one item to edit.")
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = {
-                val item = IngredientDraft()
-                update { it.copy(ingredients = it.ingredients + item) }
-                expandedId = item.id
-                focusId = item.id
-            }) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("Add ingredient") }
+    LaunchedEffect(draggingId) {
+        val id = draggingId ?: return@LaunchedEffect
+        // Allow the expanded row to collapse and every measured bound to settle
+        // before freezing the geometry used for this gesture.
+        withFrameNanos { }
+        withFrameNanos { }
+        dragBoundsSnapshot = rowBounds.toMap()
+        val pointerY = dragStartPointerY + dragOffset
+        dragTargetIndex = insertionIndexForPointer(draft.ingredients.map(IngredientDraft::id), id, pointerY, dragBoundsSnapshot)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp)
+    ) {
+        item(key = "ingredients-header") {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { SectionIntro("Ingredients", "Build a compact list, then open one item to edit.") }
+                TextButton(onClick = {
+                    val item = IngredientDraft()
+                    update { it.copy(ingredients = it.ingredients + item) }
+                    expandedId = item.id
+                    focusId = item.id
+                }) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("Add") }
+            }
+            Spacer(Modifier.height(12.dp))
         }
-        Spacer(Modifier.height(12.dp))
-        draft.ingredients.forEachIndexed { index, ingredient ->
-            key(ingredient.id) {
+        itemsIndexed(draft.ingredients, key = { _, ingredient -> ingredient.id }) { index, ingredient ->
+            val previewOffset = when {
+                draggingId == null || ingredient.id == draggingId || dragSourceIndex < 0 || dragTargetIndex < 0 -> 0f
+                dragSourceIndex < dragTargetIndex && index in (dragSourceIndex + 1)..dragTargetIndex -> -(dragBoundsSnapshot[draggingId]?.let { it.second - it.first } ?: 0f)
+                dragSourceIndex > dragTargetIndex && index in dragTargetIndex until dragSourceIndex -> dragBoundsSnapshot[draggingId]?.let { it.second - it.first } ?: 0f
+                else -> 0f
+            }
                 CompactIngredientEditor(
                     item = ingredient,
                     expanded = expandedId == ingredient.id && draggingId == null,
                     dragging = draggingId == ingredient.id,
                     dragOffset = if (draggingId == ingredient.id) dragOffset else 0f,
+                    previewOffset = previewOffset,
                     requestFocus = focusId == ingredient.id,
                     viewModel = viewModel,
+                    onBoundsChanged = { top, bottom -> rowBounds[ingredient.id] = top to bottom },
+                    onHandleCenterChanged = { center -> handleCenters[ingredient.id] = center },
                     onToggle = {
                         expandedId = if (expandedId == ingredient.id) null else ingredient.id
                         focusId = null
@@ -253,33 +284,56 @@ private fun IngredientsStep(
                         update { current -> current.copy(ingredients = current.ingredients.filterNot { it.id == ingredient.id }) }
                         if (expandedId == ingredient.id) expandedId = null
                     },
-                    onDragStart = { expandedId = null; focusId = null; draggingId = ingredient.id; dragOffset = 0f },
+                    onDragStart = {
+                        expandedId = null
+                        focusId = null
+                        draggingId = ingredient.id
+                        dragOffset = 0f
+                        dragSourceIndex = draft.ingredients.indexOfFirst { it.id == ingredient.id }
+                        dragTargetIndex = dragSourceIndex
+                        dragStartPointerY = handleCenters[ingredient.id] ?: 0f
+                        dragBoundsSnapshot = emptyMap()
+                    },
                     onDrag = { delta ->
                         dragOffset += delta
-                        if (kotlin.math.abs(dragOffset) >= moveThreshold) {
-                            val currentIndex = draft.ingredients.indexOfFirst { it.id == ingredient.id }
-                            val target = currentIndex + if (dragOffset > 0) 1 else -1
-                            if (currentIndex >= 0 && target in draft.ingredients.indices) {
-                                update { current -> current.copy(ingredients = current.ingredients.moved(currentIndex, target)) }
-                            }
-                            dragOffset = 0f
+                        if (dragBoundsSnapshot.isNotEmpty()) {
+                            dragTargetIndex = insertionIndexForPointer(
+                                draft.ingredients.map(IngredientDraft::id), ingredient.id, dragStartPointerY + dragOffset, dragBoundsSnapshot
+                            )
                         }
                     },
-                    onDragEnd = { draggingId = null; dragOffset = 0f },
+                    onDragEnd = {
+                        val movedId = draggingId
+                        val destination = dragTargetIndex
+                        if (movedId != null && destination >= 0) {
+                            update { current -> current.copy(ingredients = current.ingredients.movedByStableId(movedId, destination, IngredientDraft::id)) }
+                        }
+                        draggingId = null
+                        dragOffset = 0f
+                        dragSourceIndex = -1
+                        dragTargetIndex = -1
+                        dragStartPointerY = 0f
+                        dragBoundsSnapshot = emptyMap()
+                    },
+                    onDragCancel = {
+                        draggingId = null
+                        dragOffset = 0f
+                        dragSourceIndex = -1
+                        dragTargetIndex = -1
+                        dragStartPointerY = 0f
+                        dragBoundsSnapshot = emptyMap()
+                    },
                     onCreateCustomFood = { onCreateCustomFood(ingredient.id, ingredient.name) },
                     onEditCustomFood = { foodId -> onEditCustomFood(ingredient.id, foodId, ingredient.name) }
                 )
-            }
         }
-        Surface(
-            color = MintWash,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 24.dp)
-        ) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-                Icon(Icons.Rounded.Lightbulb, null, tint = Herb, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("Use the handle to reorder. Ingredients collapse automatically while dragging.", color = Muted, style = MaterialTheme.typography.bodySmall)
+        item(key = "ingredients-tip") {
+            Surface(color = MintWash, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                    Icon(Icons.Rounded.Lightbulb, null, tint = Herb, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Use the handle to reorder. Ingredients collapse automatically while dragging.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
@@ -291,14 +345,18 @@ private fun CompactIngredientEditor(
     expanded: Boolean,
     dragging: Boolean,
     dragOffset: Float,
+    previewOffset: Float,
     requestFocus: Boolean,
     viewModel: CookbookViewModel,
+    onBoundsChanged: (Float, Float) -> Unit,
+    onHandleCenterChanged: (Float) -> Unit,
     onToggle: () -> Unit,
     onChange: (IngredientDraft) -> Unit,
     onDelete: () -> Unit,
     onDragStart: () -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
     onCreateCustomFood: () -> Unit,
     onEditCustomFood: (String) -> Unit
 ) {
@@ -313,7 +371,13 @@ private fun CompactIngredientEditor(
         color = if (expanded) MaterialTheme.colorScheme.surfaceVariant else Paper,
         border = if (expanded || dragging) BorderStroke(1.dp, if (dragging) Herb else Line) else null,
         shadowElevation = if (dragging) 7.dp else 0.dp,
-        modifier = Modifier.fillMaxWidth().zIndex(if (dragging) 2f else 0f).graphicsLayer { translationY = dragOffset }
+        modifier = Modifier.fillMaxWidth()
+            .onGloballyPositioned { coordinates ->
+                val top = coordinates.positionInWindow().y
+                onBoundsChanged(top, top + coordinates.size.height)
+            }
+            .zIndex(if (dragging) 2f else 0f)
+            .graphicsLayer { translationY = dragOffset + previewOffset }
     ) {
         Column {
             Row(Modifier.fillMaxWidth().heightIn(min = 54.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -321,11 +385,15 @@ private fun CompactIngredientEditor(
                     Icons.Rounded.DragHandle,
                     "Drag to reorder",
                     tint = Muted,
-                    modifier = Modifier.padding(horizontal = 10.dp).size(22.dp).pointerInput(item.id) {
+                    modifier = Modifier.padding(horizontal = 10.dp).size(22.dp)
+                        .onGloballyPositioned { coordinates ->
+                            onHandleCenterChanged(coordinates.positionInWindow().y + coordinates.size.height / 2f)
+                        }
+                        .pointerInput(item.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = { onDragStart() },
                             onDragEnd = onDragEnd,
-                            onDragCancel = onDragEnd,
+                            onDragCancel = onDragCancel,
                             onDrag = { change, amount -> change.consume(); onDrag(amount.y) }
                         )
                     }
@@ -393,6 +461,13 @@ private fun FoodAutocompleteField(
     onCreateCustomFood: () -> Unit
 ) {
     var suggestions by remember(item.id) { mutableStateOf(emptyList<FoodSearchResult>()) }
+    var linkedFood by remember(item.id) { mutableStateOf<FoodEntity?>(null) }
+    var showRename by remember(item.id) { mutableStateOf(false) }
+    var renameValue by remember(item.id) { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(item.foodId) {
+        linkedFood = item.foodId?.let { viewModel.getFood(it) }
+    }
     LaunchedEffect(item.name, item.foodId) {
         suggestions = emptyList()
         if (item.foodId == null && item.name.trim().length >= 2) {
@@ -400,6 +475,31 @@ private fun FoodAutocompleteField(
             suggestions = viewModel.searchFoodOptions(item.name)
         }
     }
+
+    if (showRename && item.foodId != null) AlertDialog(
+        onDismissRequest = { showRename = false },
+        title = { Text("Rename this food") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(renameValue, { renameValue = it }, label = { Text("Display name") }, singleLine = true)
+                linkedFood?.let { Text("USDA description: ${it.name}", color = Muted, style = MaterialTheme.typography.bodySmall) }
+                Text("Leave blank to use the generated name. Nutrition and the USDA link stay unchanged.", color = Muted, style = MaterialTheme.typography.labelSmall)
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val foodId = item.foodId ?: return@Button
+                scope.launch {
+                    viewModel.setFoodDisplayName(foodId, renameValue)?.let { food ->
+                        linkedFood = food
+                        onChange(item.copy(name = food.userFacingName))
+                    }
+                    showRename = false
+                }
+            }) { Text("Save name") }
+        },
+        dismissButton = { TextButton(onClick = { showRename = false }) { Text("Cancel") } }
+    )
 
     Column {
         OutlinedTextField(
@@ -410,7 +510,13 @@ private fun FoodAutocompleteField(
             trailingIcon = {
                 if (item.foodId != null) Icon(Icons.Rounded.CheckCircle, "Matched food", tint = Herb)
             },
-            supportingText = if (item.foodId != null) ({ Text(if (item.foodSource == FoodSource.CUSTOM) "My Food" else "USDA food", color = Herb) }) else null,
+            supportingText = if (item.foodId != null) ({
+                Text(
+                    if (item.foodSource == FoodSource.CUSTOM) "My Food" else linkedFood?.name?.let { "USDA · $it" } ?: "USDA food",
+                    color = Herb,
+                    maxLines = 2
+                )
+            }) else null,
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
         )
         if (suggestions.isNotEmpty()) {
@@ -425,14 +531,16 @@ private fun FoodAutocompleteField(
                         val food = result.food
                         Row(
                             Modifier.fillMaxWidth().clickable {
-                                onChange(item.copy(name = food.name, foodId = food.foodId, gramsEquivalent = null, foodSource = food.foodSource))
+                                linkedFood = food
+                                onChange(item.copy(name = result.displayName, foodId = food.foodId, gramsEquivalent = null, foodSource = food.foodSource))
                                 suggestions = emptyList()
                             }.padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(food.name, style = MaterialTheme.typography.bodyMedium)
-                                Text(result.servingLabel ?: food.name, style = MaterialTheme.typography.labelMedium, color = Muted, maxLines = 1)
+                                Text(result.displayName, style = MaterialTheme.typography.bodyMedium)
+                                if (result.displayName != food.name) Text(food.name, style = MaterialTheme.typography.labelSmall, color = Muted, maxLines = 2)
+                                result.servingLabel?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = Muted, maxLines = 1) }
                             }
                             if (food.foodSource == FoodSource.CUSTOM) CustomBadge() else Text("USDA", style = MaterialTheme.typography.labelMedium, color = Herb)
                         }
@@ -445,6 +553,11 @@ private fun FoodAutocompleteField(
             TextButton(onClick = onCreateCustomFood, modifier = Modifier.align(Alignment.End)) {
                 Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("Create custom food")
             }
+        } else if (item.foodSource == FoodSource.USDA && item.foodId != null) {
+            TextButton(
+                onClick = { renameValue = item.name; showRename = true },
+                modifier = Modifier.align(Alignment.End)
+            ) { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("Rename display") }
         }
     }
 }

@@ -68,17 +68,30 @@ interface FoodDao {
     @Query("SELECT * FROM foods WHERE foodId IN (:foodIds)")
     suspend fun getByIds(foodIds: List<String>): List<FoodEntity>
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertDisplayNameOverride(override: FoodDisplayNameOverrideEntity)
+
+    @Query("DELETE FROM food_display_name_overrides WHERE foodId = :foodId")
+    suspend fun deleteDisplayNameOverride(foodId: String)
+
+    @Query("SELECT * FROM food_display_name_overrides WHERE foodId IN (:foodIds)")
+    suspend fun getDisplayNameOverrides(foodIds: List<String>): List<FoodDisplayNameOverrideEntity>
+
     @Query(
         """
         SELECT DISTINCT foods.* FROM foods
         LEFT JOIN food_aliases ON food_aliases.foodId = foods.foodId
+        LEFT JOIN food_display_name_overrides ON food_display_name_overrides.foodId = foods.foodId
         WHERE foods.searchName LIKE '%' || :query || '%'
            OR food_aliases.alias LIKE '%' || :query || '%'
+           OR food_display_name_overrides.searchName LIKE '%' || :query || '%'
         ORDER BY CASE
             WHEN foods.searchName = :query THEN 0
+            WHEN food_display_name_overrides.searchName = :query THEN 0
             WHEN foods.searchName LIKE :query || '%' THEN 1
+            WHEN food_display_name_overrides.searchName LIKE :query || '%' THEN 1
             ELSE 2
-        END, foods.name
+        END, COALESCE(food_display_name_overrides.displayName, foods.displayName, foods.name)
         LIMIT :limit
         """
     )
@@ -151,13 +164,14 @@ class Converters {
         FoodEntity::class,
         FoodAliasEntity::class,
         FoodPortionEntity::class,
+        FoodDisplayNameOverrideEntity::class,
         CustomFoodEntity::class,
         NutritionProfileEntity::class,
         MealLogEntity::class,
         MealLogIngredientEntity::class,
         FoodLogEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -185,7 +199,8 @@ abstract class CookbookDatabase : RoomDatabase() {
                         MIGRATION_2_3,
                         MIGRATION_3_4,
                         MIGRATION_4_5,
-                        MIGRATION_5_6
+                        MIGRATION_5_6,
+                        MIGRATION_6_7
                     )
                     .build()
                     .also { instance = it }
@@ -439,6 +454,19 @@ abstract class CookbookDatabase : RoomDatabase() {
                     )"""
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_custom_foods_searchName` ON `custom_foods` (`searchName`)")
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `foods` ADD COLUMN `displayName` TEXT")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `food_display_name_overrides` (
+                        `foodId` TEXT NOT NULL, `displayName` TEXT NOT NULL, `searchName` TEXT NOT NULL,
+                        PRIMARY KEY(`foodId`)
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_display_name_overrides_searchName` ON `food_display_name_overrides` (`searchName`)")
             }
         }
     }

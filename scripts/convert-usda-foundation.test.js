@@ -2,7 +2,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
 
-const { convertPortions, enrichFood } = require("./convert-usda-foundation");
+const { convertPortions, displayNameFor, enrichFood } = require("./convert-usda-foundation");
+
+test("generates conservative reviewed and category-safe display names", () => {
+  assert.equal(displayNameFor("2346394", "Nuts, walnuts, English, halves, raw", "NUTS_SEEDS"), "Walnuts");
+  assert.equal(displayNameFor("2515378", "Nuts, macadamia nuts, raw", "NUTS_SEEDS"), "Macadamia nuts");
+  assert.equal(displayNameFor("2262075", "Flaxseed, ground", "NUTS_SEEDS"), "Ground flaxseed");
+  assert.equal(displayNameFor("746778", "Milk, reduced fat, fluid, 2% milkfat", "DAIRY"), "2% milk");
+  assert.equal(displayNameFor("2727588", "Juice, pomegranate, from concentrate", "FRUIT"), "Pomegranate juice");
+  assert.equal(displayNameFor("other", "Ambiguous, food, description", "OTHER"), "Ambiguous, food, description");
+});
 
 test("retains native USDA tablespoon and teaspoon portions", () => {
   const portions = convertPortions("food", [
@@ -59,12 +68,19 @@ test("fills only missing core nutrients and leaves unresolved foods untouched", 
 
 test("generated asset contains reviewed Nutty Pudding enrichments", () => {
   const asset = require(path.resolve(__dirname, "../app/src/main/assets/foods.json"));
+  assert.equal(asset.schemaVersion, 3);
   const byId = new Map(asset.foods.map((food) => [food.foodId, food]));
   for (const id of ["2346394", "2515378", "2262075", "2710819", "2346411", "2727588"]) {
     assert.ok(byId.get(id).portions.length > 0, `${byId.get(id).name} should have portions`);
   }
   assert.equal(byId.get("2727588").caloriesKcal, 54);
   assert.equal(byId.get("2727588").carbohydrateG, 13.1);
+  assert.equal(byId.get("2346394").displayName, "Walnuts");
+  assert.equal(byId.get("2515378").displayName, "Macadamia nuts");
+  assert.equal(byId.get("2262075").displayName, "Ground flaxseed");
+  assert.equal(byId.get("746778").displayName, "2% milk");
+  assert.equal(byId.get("2727588").displayName, "Pomegranate juice");
+  assert.equal(byId.get("2346411").displayName, "Blueberries");
 });
 
 test("Nutty Pudding USDA ingredients produce realistic non-zero macros", () => {

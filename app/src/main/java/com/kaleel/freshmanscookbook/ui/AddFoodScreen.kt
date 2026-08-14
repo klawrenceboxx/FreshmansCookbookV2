@@ -60,12 +60,17 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
                 Column {
                     suggestions.take(8).forEach { food ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { selected = food; query = food.name; suggestions = emptyList(); error = null }.padding(14.dp),
+                            Modifier.fillMaxWidth().clickable { selected = food; query = food.userFacingName; suggestions = emptyList(); error = null }.padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(food.name)
-                                Text(food.category.name.replace('_', ' ').lowercase(), color = Muted, style = MaterialTheme.typography.labelSmall)
+                                Text(food.userFacingName)
+                                Text(
+                                    if (food.userFacingName == food.name) food.category.name.replace('_', ' ').lowercase() else food.name,
+                                    color = Muted,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 2
+                                )
                             }
                             Text(if (food.foodSource == FoodSource.CUSTOM) "CUSTOM" else "USDA", color = Herb, style = MaterialTheme.typography.labelMedium)
                         }

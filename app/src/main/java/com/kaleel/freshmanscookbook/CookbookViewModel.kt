@@ -117,7 +117,7 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
             ingredients = recipe.ingredients.map {
                 IngredientDraft(
                     id = it.id,
-                    name = it.name,
+                    name = it.foodId?.let(foodsById::get)?.userFacingName ?: it.name,
                     quantityText = formatQuantity(it.quantity),
                     unit = it.unit,
                     foodId = it.foodId,
@@ -167,6 +167,9 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     suspend fun searchFoods(query: String): List<FoodEntity> = foodRepository.search(query)
     suspend fun searchFoodOptions(query: String): List<FoodSearchResult> = foodRepository.searchWithSources(query)
     suspend fun getCustomFood(foodId: String): CustomFoodEntity? = foodRepository.getCustomFood(foodId)
+    suspend fun getFood(foodId: String): FoodEntity? = foodRepository.getByIds(listOf(foodId)).firstOrNull()
+    suspend fun setFoodDisplayName(foodId: String, displayName: String): FoodEntity? =
+        foodRepository.setDisplayNameOverride(foodId, displayName)
     suspend fun saveCustomFood(input: CustomFoodInput): FoodSearchResult = foodRepository.saveCustomFood(input)
     suspend fun resolveIngredientGrams(foodId: String?, quantityText: String, unit: IngredientUnit): Double? =
         foodRepository.gramsFor(foodId, parseQuantity(quantityText), unit)
@@ -175,8 +178,10 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
         if (_meal.value?.recipeId == recipe.id) return
         _mealLogState.value = MealLogState.IDLE
         viewModelScope.launch {
-            _meal.value = foodRepository.resolveMissingGrams(MealInstance.fromRecipe(recipe))
-            refreshMealFoods()
+            val resolved = foodRepository.resolveMissingGrams(MealInstance.fromRecipe(recipe))
+            val foods = foodRepository.getByIds(resolved.ingredients.mapNotNull { it.foodId }).associateBy { it.foodId }
+            _mealFoods.value = foods
+            _meal.value = resolved.withFoodDisplayNames(foods)
         }
     }
 
@@ -251,14 +256,16 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
         val quantity = parseQuantity(quantityText) ?: return false
         val grams = foodRepository.gramsFor(food.foodId, quantity, unit) ?: return false
         return runCatching {
-            foodLogRepository.logFood(FoodLogDraft(food.foodId, food.name, quantity, unit, grams))
+            foodLogRepository.logFood(FoodLogDraft(food.foodId, food.userFacingName, quantity, unit, grams))
             refreshDay()
         }.isSuccess
     }
 
     private suspend fun refreshMealFoods() {
         val ids = _meal.value?.ingredients?.mapNotNull { it.foodId }.orEmpty()
-        _mealFoods.value = foodRepository.getByIds(ids).associateBy { it.foodId }
+        val foods = foodRepository.getByIds(ids).associateBy { it.foodId }
+        _mealFoods.value = foods
+        _meal.update { it?.withFoodDisplayNames(foods) }
     }
 
     fun refreshDay() { dayBounds.value = localDayBounds() }
@@ -271,6 +278,12 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
         }
     }
 }
+
+private fun MealInstance.withFoodDisplayNames(foodsById: Map<String, FoodEntity>): MealInstance = copy(
+    ingredients = ingredients.map { ingredient ->
+        ingredient.foodId?.let(foodsById::get)?.let { food -> ingredient.copy(name = food.userFacingName) } ?: ingredient
+    }
+)
 
 fun parseQuantity(raw: String): Double? {
     val text = raw.trim()

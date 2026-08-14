@@ -72,6 +72,7 @@ data class FoodSearchResult(
     val customFood: CustomFoodEntity? = null
 ) {
     val source: FoodSource get() = food.foodSource
+    val displayName: String get() = food.userFacingName
     val servingLabel: String?
         get() = customFood?.let {
             val quantity = formatCustomNumber(it.servingQuantity)
@@ -151,7 +152,7 @@ fun CustomFoodInput.toEntities(
         vitaminB12Mcg = per100(NutrientKey.VITAMIN_B12), cholineMg = per100(NutrientKey.CHOLINE),
         saturatedFatG = per100(NutrientKey.SATURATED_FAT), monounsaturatedFatG = per100(NutrientKey.MONOUNSATURATED_FAT),
         polyunsaturatedFatG = per100(NutrientKey.POLYUNSATURATED_FAT), cholesterolMg = per100(NutrientKey.CHOLESTEROL),
-        source = "User custom food", sourceFoodId = id, foodSource = FoodSource.CUSTOM
+        source = "User custom food", sourceFoodId = id, foodSource = FoodSource.CUSTOM, displayName = custom.name
     )
     return custom to food
 }

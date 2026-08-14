@@ -71,7 +71,22 @@ data class FoodEntity(
     // Provenance lets us trace a value back to the source dataset.
     val source: String,
     val sourceFoodId: String?,
-    val foodSource: FoodSource = FoodSource.USDA
+    val foodSource: FoodSource = FoodSource.USDA,
+    /** Generated common name; [name] remains the authoritative USDA description. */
+    val displayName: String? = null
+)
+
+val FoodEntity.userFacingName: String
+    get() = displayName?.trim()?.takeIf(String::isNotBlank) ?: name
+
+@Entity(
+    tableName = "food_display_name_overrides",
+    indices = [Index(value = ["searchName"])]
+)
+data class FoodDisplayNameOverrideEntity(
+    @PrimaryKey val foodId: String,
+    val displayName: String,
+    val searchName: String
 )
 
 enum class FoodSource { USDA, CUSTOM }

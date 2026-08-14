@@ -16,6 +16,10 @@ const inputPath = process.argv[2] && path.resolve(process.argv[2]);
 const enrichmentPaths = process.argv.slice(3).map((value) => path.resolve(value));
 const outputPath = path.resolve(__dirname, "../app/src/main/assets/foods.json");
 const matchPath = path.resolve(__dirname, "usda-enrichment-matches.json");
+const displayNameOverridePath = path.resolve(__dirname, "usda-display-name-overrides.json");
+const DISPLAY_NAME_OVERRIDES = fs.existsSync(displayNameOverridePath)
+  ? JSON.parse(fs.readFileSync(displayNameOverridePath, "utf8")).overrides || {}
+  : {};
 
 if (require.main === module && !inputPath) {
   console.error('Usage: node scripts/convert-usda-foundation.js "C:\\path\\to\\foundation-foods.json" ["C:\\path\\to\\sr-legacy.json" ...]');
@@ -157,6 +161,27 @@ function normalizeSearchName(value) {
 
 function cleanDisplayName(value) {
   return value.replace(/\s+/g, " ").replace(/\s+,/g, ",").trim();
+}
+
+function sentenceCase(value) {
+  const clean = cleanDisplayName(value);
+  return clean ? clean[0].toUpperCase() + clean.slice(1) : clean;
+}
+
+/** Conservative common names: reviewed overrides first, then only safe shapes. */
+function displayNameFor(foodId, description, category) {
+  const reviewed = DISPLAY_NAME_OVERRIDES[String(foodId)];
+  if (reviewed) return reviewed;
+  const original = cleanDisplayName(description);
+  const simpleRaw = original.match(/^([^,]+), raw$/i);
+  if (simpleRaw && ["FRUIT", "VEGETABLES", "HERBS_SPICES"].includes(category)) {
+    return sentenceCase(simpleRaw[1]);
+  }
+  const nut = original.match(/^Nuts,\s*([^,]+)/i);
+  if (nut && category === "NUTS_SEEDS") return sentenceCase(nut[1]);
+  const juice = original.match(/^Juice,\s*([^,]+)/i);
+  if (juice && ["FRUIT", "BEVERAGES"].includes(category)) return `${sentenceCase(juice[1])} juice`;
+  return original;
 }
 
 function finiteNonNegative(value) {
@@ -328,13 +353,15 @@ function convertFood(food) {
   if (nutrientCount === 0) return { skip: "no supported nutrients" };
 
   const foodId = String(fdcId); // USDA fdcId is the app's stable external/canonical ID.
+  const category = categoryFor(food);
   const portions = convertPortions(foodId, food.foodPortions);
   return {
     food: {
       foodId,
       name,
+      displayName: displayNameFor(foodId, name, category),
       searchName: normalizeSearchName(name),
-      category: categoryFor(food),
+      category,
       ...nutrients,
       source: "USDA FoodData Central Foundation Foods",
       sourceFoodId: foodId,
@@ -505,7 +532,7 @@ async function main() {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.tmp`;
   const output = fs.createWriteStream(temporaryPath, { encoding: "utf8" });
-  await write(output, '{"schemaVersion":2,"source":"USDA FoodData Central Foundation Foods enriched with reviewed USDA FoodData Central records","foods":[');
+  await write(output, '{"schemaVersion":3,"source":"USDA FoodData Central Foundation Foods enriched with reviewed USDA FoodData Central records","foods":[');
   let first = true;
 
   try {
@@ -587,4 +614,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { convertPortions, deriveVolumePortions, enrichFood, nutrientsFor, normalizeSearchName, streamFoods };
+module.exports = { convertPortions, deriveVolumePortions, displayNameFor, enrichFood, nutrientsFor, normalizeSearchName, streamFoods };

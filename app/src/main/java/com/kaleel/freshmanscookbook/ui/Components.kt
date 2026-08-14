@@ -50,3 +50,32 @@ fun moveItem(listSize: Int, index: Int, direction: Int): Int? {
 }
 
 fun <T> List<T>.moved(from: Int, to: Int): List<T> = toMutableList().apply { add(to, removeAt(from)) }
+
+fun <T, K> List<T>.movedByStableId(id: K, to: Int, key: (T) -> K): List<T> {
+    val from = indexOfFirst { key(it) == id }
+    if (from < 0 || isEmpty()) return this
+    val destination = to.coerceIn(indices)
+    return if (from == destination) this else moved(from, destination)
+}
+
+/** Determine the final insertion slot without mutating the list mid-gesture. */
+fun insertionIndexForPointer(
+    orderedIds: List<String>,
+    draggedId: String,
+    pointerY: Float,
+    bounds: Map<String, Pair<Float, Float>>
+): Int {
+    if (orderedIds.isEmpty()) return -1
+    val otherIds = orderedIds.filterNot { it == draggedId }
+    val measured = otherIds.mapIndexedNotNull { insertionPosition, id ->
+        val (top, bottom) = bounds[id] ?: return@mapIndexedNotNull null
+        insertionPosition to (top + bottom) / 2f
+    }
+    if (measured.isEmpty()) return orderedIds.indexOf(draggedId).coerceAtLeast(0)
+    var insertion = measured.first().first
+    for ((position, center) in measured) {
+        if (pointerY <= center) break
+        insertion = position + 1
+    }
+    return insertion.coerceIn(0, orderedIds.lastIndex)
+}

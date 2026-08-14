@@ -30,7 +30,7 @@ class FoodRepository(
     suspend fun search(query: String, limit: Int = 8): List<FoodEntity> {
         ensureSeeded()
         val normalized = normalizeFoodSearchName(query)
-        return if (normalized.length < 2) emptyList() else dao.search(normalized, limit)
+        return if (normalized.length < 2) emptyList() else applyDisplayNameOverrides(dao.search(normalized, limit))
     }
 
     suspend fun searchWithSources(query: String, limit: Int = 12): List<FoodSearchResult> {
@@ -42,6 +42,18 @@ class FoodRepository(
     }
 
     suspend fun getCustomFood(foodId: String): CustomFoodEntity? = customFoodDao.get(foodId)
+
+    suspend fun setDisplayNameOverride(foodId: String, value: String): FoodEntity? {
+        ensureSeeded()
+        val food = dao.getByIds(listOf(foodId)).firstOrNull() ?: return null
+        if (food.foodSource != FoodSource.USDA) return food
+        val displayName = value.trim()
+        if (displayName.isBlank()) dao.deleteDisplayNameOverride(foodId)
+        else dao.upsertDisplayNameOverride(
+            FoodDisplayNameOverrideEntity(foodId, displayName, normalizeFoodSearchName(displayName))
+        )
+        return food.copy(displayName = displayName.takeIf(String::isNotBlank) ?: food.displayName)
+    }
 
     suspend fun saveCustomFood(input: CustomFoodInput): FoodSearchResult {
         require(input.name.isNotBlank()) { "Custom food name is required" }
@@ -75,7 +87,13 @@ class FoodRepository(
     suspend fun getByIds(foodIds: Collection<String>): List<FoodEntity> {
         ensureSeeded()
         val ids = foodIds.filter(String::isNotBlank).distinct()
-        return if (ids.isEmpty()) emptyList() else dao.getByIds(ids)
+        return if (ids.isEmpty()) emptyList() else applyDisplayNameOverrides(dao.getByIds(ids))
+    }
+
+    private suspend fun applyDisplayNameOverrides(foods: List<FoodEntity>): List<FoodEntity> {
+        if (foods.isEmpty()) return foods
+        val overrides = dao.getDisplayNameOverrides(foods.map { it.foodId }).associateBy { it.foodId }
+        return foods.map { food -> food.copy(displayName = overrides[food.foodId]?.displayName ?: food.displayName) }
     }
 
     /** Resolve an entered ingredient amount to grams without guessing volume. */
@@ -185,6 +203,7 @@ private object FoodAssetSeeder {
                     foods += FoodEntity(
                         foodId = foodId,
                         name = item.getString("name"),
+                        displayName = item.optString("displayName").takeIf(String::isNotBlank),
                         searchName = item.getString("searchName"),
                         category = FoodCategory.valueOf(item.getString("category")),
                         caloriesKcal = item.nullableDouble("caloriesKcal"),
@@ -230,6 +249,10 @@ private object FoodAssetSeeder {
                             val alias = normalizeFoodSearchName(values.optString(aliasIndex))
                             if (alias.isNotBlank()) aliases += FoodAliasEntity(alias = alias, foodId = foodId)
                         }
+                    }
+                    item.optString("displayName").takeIf(String::isNotBlank)?.let { displayName ->
+                        val alias = normalizeFoodSearchName(displayName)
+                        if (alias.isNotBlank()) aliases += FoodAliasEntity(alias = alias, foodId = foodId)
                     }
                     item.optJSONArray("portions")?.let { values ->
                         for (portionIndex in 0 until values.length()) {

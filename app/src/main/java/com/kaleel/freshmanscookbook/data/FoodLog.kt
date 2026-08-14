@@ -130,7 +130,7 @@ class FoodLogRepository(
         val temporaryIngredient = MealIngredient(
             id = id,
             sourceIngredientId = null,
-            name = draft.foodName.ifBlank { food.name },
+            name = draft.foodName.ifBlank { food.userFacingName },
             quantity = draft.quantity,
             unit = draft.unit,
             order = 0,
@@ -147,7 +147,7 @@ class FoodLogRepository(
         val entity = FoodLogEntity(
             id = id,
             foodId = food.foodId,
-            foodName = draft.foodName.ifBlank { food.name },
+            foodName = draft.foodName.ifBlank { food.userFacingName },
             quantity = draft.quantity,
             unit = draft.unit,
             gramsEquivalent = draft.gramsEquivalent,
