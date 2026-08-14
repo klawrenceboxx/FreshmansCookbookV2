@@ -47,7 +47,7 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Log a snack or ingredient", style = MaterialTheme.typography.displaySmall)
-            Text("Choose a USDA food and an amount with a supported gram conversion.", color = Muted)
+            Text("Choose a USDA food or My Food with a supported gram conversion.", color = Muted)
             OutlinedTextField(
                 query,
                 { query = it; selected = null; error = null },
@@ -67,7 +67,7 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
                                 Text(food.name)
                                 Text(food.category.name.replace('_', ' ').lowercase(), color = Muted, style = MaterialTheme.typography.labelSmall)
                             }
-                            Text("USDA", color = Herb, style = MaterialTheme.typography.labelMedium)
+                            Text(if (food.foodSource == FoodSource.CUSTOM) "CUSTOM" else "USDA", color = Herb, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -83,7 +83,7 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
                 )
                 FoodUnitMenu(unit, { unit = it; error = null }, Modifier.weight(1f))
             }
-            Text("Mass units always work. Household units only work when USDA provides a defensible portion weight.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text("Mass units always work. Household units require a saved food-specific gram conversion.", color = Muted, style = MaterialTheme.typography.bodySmall)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
@@ -91,7 +91,7 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
                     saving = true
                     scope.launch {
                         if (viewModel.logFood(food, quantity, unit)) onLogged()
-                        else { error = "That amount can’t be converted to grams. Try grams or another USDA-supported unit."; saving = false }
+                        else { error = "That amount can’t be converted to grams. Try grams or another supported unit."; saving = false }
                     }
                 },
                 enabled = selected != null && quantity.isNotBlank() && !saving,

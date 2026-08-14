@@ -236,7 +236,13 @@ private fun QuickAddDialog(viewModel: CookbookViewModel, onDismiss: () -> Unit) 
                     OutlinedTextField(quantity, { quantity = it }, label = { Text("Amount") }, singleLine = true, modifier = Modifier.weight(1f))
                     FoodUnitMenu(unit, { unit = it }, Modifier.weight(1f))
                 }
-                Text(if (selected == null) "Custom ingredients are allowed; nutrition stays unknown." else "Matched to USDA Foundation food.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (selected == null) "Unlinked ingredients keep nutrition unresolved."
+                    else if (selected?.foodSource == FoodSource.CUSTOM) "Matched to My Foods."
+                    else "Matched to USDA food.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
         },
         confirmButton = { Button(onClick = { viewModel.quickAddIngredient(name, quantity, unit, selected); onDismiss() }, enabled = name.isNotBlank()) { Text("Add checked") } },

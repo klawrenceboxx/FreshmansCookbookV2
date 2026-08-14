@@ -15,6 +15,7 @@ class FoodRepository(
     private val database: CookbookDatabase
 ) {
     private val dao = database.foodDao()
+    private val customFoodDao = database.customFoodDao()
     private val seedMutex = Mutex()
     @Volatile private var seededThisProcess = false
 
@@ -30,6 +31,44 @@ class FoodRepository(
         ensureSeeded()
         val normalized = normalizeFoodSearchName(query)
         return if (normalized.length < 2) emptyList() else dao.search(normalized, limit)
+    }
+
+    suspend fun searchWithSources(query: String, limit: Int = 12): List<FoodSearchResult> {
+        val foods = search(query, limit)
+        val customIds = foods.filter { it.foodSource == FoodSource.CUSTOM }.map { it.foodId }
+        val customById = if (customIds.isEmpty()) emptyMap()
+        else customFoodDao.getByIds(customIds).associateBy { it.foodId }
+        return foods.map { FoodSearchResult(it, customById[it.foodId]) }
+    }
+
+    suspend fun getCustomFood(foodId: String): CustomFoodEntity? = customFoodDao.get(foodId)
+
+    suspend fun saveCustomFood(input: CustomFoodInput): FoodSearchResult {
+        require(input.name.isNotBlank()) { "Custom food name is required" }
+        require(input.servingQuantity > 0.0) { "Serving quantity must be positive" }
+        require(input.servingUnit != IngredientUnit.NONE) { "Serving unit is required" }
+        ensureSeeded()
+        val existing = input.foodId?.let { customFoodDao.get(it) }
+        val (custom, food) = input.toEntities(existingCreatedAt = existing?.createdAt)
+        database.withTransaction {
+            customFoodDao.upsert(custom)
+            dao.insertFoods(listOf(food))
+            dao.deletePortionsForFood(food.foodId)
+            val grams = custom.servingGrams
+            if (grams != null && custom.servingUnit !in MASS_UNITS) {
+                dao.insertPortions(
+                    listOf(
+                        FoodPortionEntity(
+                            foodId = food.foodId,
+                            unit = custom.servingUnit,
+                            description = "1 ${custom.servingUnit.label}",
+                            gramsPerUnit = grams / custom.servingQuantity
+                        )
+                    )
+                )
+            }
+        }
+        return FoodSearchResult(food, custom)
     }
 
     /** Resolve linked foods in one Room query for recipe/meal nutrition. */
@@ -125,7 +164,7 @@ private object FoodAssetSeeder {
         database.withTransaction {
             val dao = database.foodDao()
             dao.deleteAllAliases()
-            dao.deleteAllPortions()
+            dao.deleteAllUsdaPortions()
             val foods = ArrayList<FoodEntity>(100)
             val aliases = ArrayList<FoodAliasEntity>(100)
             val portions = ArrayList<FoodPortionEntity>(100)
@@ -214,7 +253,7 @@ private object FoodAssetSeeder {
 
             // Reuse the existing starter catalog to add user-language aliases
             // without changing the authoritative USDA display names.
-            val allFoods = dao.getAllFoods()
+            val allFoods = dao.getAllUsdaFoods()
             val seedAliases = FoodSeedData.starterCatalog.flatMap { spec ->
                 val match = spec.searchTerms.asSequence()
                     .map(::normalizeFoodSearchName)
@@ -236,3 +275,5 @@ private object FoodAssetSeeder {
         return optDouble(name, Double.NaN).takeIf { it.isFinite() && it >= 0 }
     }
 }
+
+private val MASS_UNITS = setOf(IngredientUnit.G, IngredientUnit.KG, IngredientUnit.OZ, IngredientUnit.LB)

@@ -18,7 +18,8 @@ data class IngredientDraft(
     val quantityText: String = "",
     val unit: IngredientUnit = IngredientUnit.NONE,
     val foodId: String? = null,
-    val gramsEquivalent: Double? = null
+    val gramsEquivalent: Double? = null,
+    val foodSource: FoodSource? = null
 )
 
 data class StepDraft(val id: String = UUID.randomUUID().toString(), val text: String = "")
@@ -106,6 +107,7 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
 
     suspend fun startEdit(id: String) {
         val recipe = repository.get(id) ?: return
+        val foodsById = foodRepository.getByIds(recipe.ingredients.mapNotNull { it.foodId }).associateBy { it.foodId }
         _draft.value = RecipeDraft(
             id = recipe.id,
             name = recipe.name,
@@ -113,7 +115,15 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
             servingsText = recipe.servings.toString(),
             imagePath = recipe.imagePath,
             ingredients = recipe.ingredients.map {
-                IngredientDraft(it.id, it.name, formatQuantity(it.quantity), it.unit, it.foodId, it.gramsEquivalent)
+                IngredientDraft(
+                    id = it.id,
+                    name = it.name,
+                    quantityText = formatQuantity(it.quantity),
+                    unit = it.unit,
+                    foodId = it.foodId,
+                    gramsEquivalent = it.gramsEquivalent,
+                    foodSource = it.foodId?.let(foodsById::get)?.foodSource
+                )
             },
             steps = recipe.steps.map { StepDraft(it.id, it.text) },
             createdAt = recipe.createdAt
@@ -155,6 +165,11 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     fun delete(id: String) { viewModelScope.launch { repository.delete(id) } }
 
     suspend fun searchFoods(query: String): List<FoodEntity> = foodRepository.search(query)
+    suspend fun searchFoodOptions(query: String): List<FoodSearchResult> = foodRepository.searchWithSources(query)
+    suspend fun getCustomFood(foodId: String): CustomFoodEntity? = foodRepository.getCustomFood(foodId)
+    suspend fun saveCustomFood(input: CustomFoodInput): FoodSearchResult = foodRepository.saveCustomFood(input)
+    suspend fun resolveIngredientGrams(foodId: String?, quantityText: String, unit: IngredientUnit): Double? =
+        foodRepository.gramsFor(foodId, parseQuantity(quantityText), unit)
 
     fun beginMeal(recipe: Recipe) {
         if (_meal.value?.recipeId == recipe.id) return

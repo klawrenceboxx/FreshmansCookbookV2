@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -22,10 +24,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.kaleel.freshmanscookbook.*
 import com.kaleel.freshmanscookbook.data.*
 import kotlinx.coroutines.delay
@@ -35,17 +43,47 @@ import java.util.UUID
 
 private val editorLabels = listOf("Basics", "Ingredients", "Steps", "Review")
 
+private data class CustomFoodRequest(
+    val ingredientId: String,
+    val suggestedName: String,
+    val initial: CustomFoodEntity? = null
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(viewModel: CookbookViewModel, onClose: () -> Unit, onSaved: (String) -> Unit) {
     val draft by viewModel.draft.collectAsState()
     var page by rememberSaveable { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
-    val canContinue = when (page) {
-        0 -> draft.name.isNotBlank() && draft.category != null && (draft.servingsText.toIntOrNull() ?: 0) > 0
-        1 -> draft.ingredients.any { it.name.isNotBlank() }
-        2 -> draft.steps.any { it.text.isNotBlank() }
-        else -> true
+    var validationError by remember { mutableStateOf<String?>(null) }
+    var customFoodRequest by remember { mutableStateOf<CustomFoodRequest?>(null) }
+
+    customFoodRequest?.let { request ->
+        CustomFoodEditorScreen(
+            initial = request.initial,
+            suggestedName = request.suggestedName,
+            onBack = { customFoodRequest = null },
+            onSave = { input ->
+                scope.launch {
+                    val saved = viewModel.saveCustomFood(input)
+                    viewModel.updateDraft { current ->
+                        current.copy(ingredients = current.ingredients.map { ingredient ->
+                            if (ingredient.id != request.ingredientId) ingredient
+                            else ingredient.copy(
+                                name = saved.food.name,
+                                foodId = saved.food.foodId,
+                                foodSource = FoodSource.CUSTOM,
+                                quantityText = ingredient.quantityText.ifBlank { formatQuantity(saved.customFood?.servingQuantity) },
+                                unit = ingredient.unit.takeIf { it != IngredientUnit.NONE } ?: saved.customFood?.servingUnit ?: IngredientUnit.NONE,
+                                gramsEquivalent = null
+                            )
+                        })
+                    }
+                    customFoodRequest = null
+                }
+            }
+        )
+        return
     }
 
     Scaffold(
@@ -63,9 +101,13 @@ fun EditorScreen(viewModel: CookbookViewModel, onClose: () -> Unit, onSaved: (St
                     if (page > 0) OutlinedButton(onClick = { page-- }, modifier = Modifier.weight(1f)) { Text("Back") }
                     Button(
                         onClick = {
-                            if (page < 3) page++ else scope.launch { onSaved(viewModel.save()) }
+                            validationError = null
+                            if (page < 3) page++
+                            else validateRecipeDraft(draft)?.let { issue ->
+                                validationError = issue.second
+                                page = issue.first
+                            } ?: scope.launch { onSaved(viewModel.save()) }
                         },
-                        enabled = canContinue,
                         modifier = Modifier.weight(1f)
                     ) { Text(if (page == 3) "Save Recipe" else "Continue") }
                 }
@@ -73,10 +115,23 @@ fun EditorScreen(viewModel: CookbookViewModel, onClose: () -> Unit, onSaved: (St
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            EditorProgress(page, onStep = { if (it < page) page = it })
+            EditorProgress(page, onStep = { page = it; validationError = null })
+            validationError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            }
             when (page) {
                 0 -> BasicsStep(draft, viewModel::updateDraft)
-                1 -> IngredientsStep(draft, viewModel, viewModel::updateDraft)
+                1 -> IngredientsStep(
+                    draft,
+                    viewModel,
+                    viewModel::updateDraft,
+                    onCreateCustomFood = { ingredientId, name -> customFoodRequest = CustomFoodRequest(ingredientId, name) },
+                    onEditCustomFood = { ingredientId, foodId, name ->
+                        scope.launch {
+                            customFoodRequest = CustomFoodRequest(ingredientId, name, viewModel.getCustomFood(foodId))
+                        }
+                    }
+                )
                 2 -> StepsStep(draft, viewModel::updateDraft)
                 else -> ReviewStep(draft, onEdit = { page = it })
             }
@@ -89,7 +144,7 @@ private fun EditorProgress(current: Int, onStep: (Int) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.Top) {
         editorLabels.forEachIndexed { index, label ->
             Column(
-                Modifier.width(64.dp).clickable(enabled = index < current) { onStep(index) },
+                Modifier.width(64.dp).clickable { onStep(index) },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -156,66 +211,173 @@ private fun BasicsStep(draft: RecipeDraft, update: ((RecipeDraft) -> RecipeDraft
 private fun IngredientsStep(
     draft: RecipeDraft,
     viewModel: CookbookViewModel,
-    update: ((RecipeDraft) -> RecipeDraft) -> Unit
+    update: ((RecipeDraft) -> RecipeDraft) -> Unit,
+    onCreateCustomFood: (String, String) -> Unit,
+    onEditCustomFood: (String, String, String) -> Unit
 ) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        SectionIntro("Build your ingredient list", "Keep each item separate so it’s easy to scan at the stove.")
-        draft.ingredients.forEachIndexed { index, ingredient ->
-            IngredientEditor(
-                number = index + 1,
-                item = ingredient,
-                viewModel = viewModel,
-                canMoveUp = index > 0,
-                canMoveDown = index < draft.ingredients.lastIndex,
-                onChange = { changed -> update { it.copy(ingredients = it.ingredients.toMutableList().apply { set(index, changed) }) } },
-                onDelete = { update { it.copy(ingredients = it.ingredients.filterIndexed { i, _ -> i != index }) } },
-                onMove = { direction ->
-                    moveItem(draft.ingredients.size, index, direction)?.let { target -> update { it.copy(ingredients = it.ingredients.moved(index, target)) } }
-                }
-            )
+    var expandedId by rememberSaveable(draft.id) { mutableStateOf<String?>(null) }
+    var focusId by remember { mutableStateOf<String?>(null) }
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val moveThreshold = with(LocalDensity.current) { 52.dp.toPx() }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SectionIntro("Ingredients", "Build a compact list, then open one item to edit.")
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = {
+                val item = IngredientDraft()
+                update { it.copy(ingredients = it.ingredients + item) }
+                expandedId = item.id
+                focusId = item.id
+            }) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("Add ingredient") }
         }
-        OutlinedButton(
-            onClick = { update { it.copy(ingredients = it.ingredients + IngredientDraft()) } },
-            modifier = Modifier.fillMaxWidth()
-        ) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(8.dp)); Text("Add Ingredient") }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(12.dp))
+        draft.ingredients.forEachIndexed { index, ingredient ->
+            key(ingredient.id) {
+                CompactIngredientEditor(
+                    item = ingredient,
+                    expanded = expandedId == ingredient.id && draggingId == null,
+                    dragging = draggingId == ingredient.id,
+                    dragOffset = if (draggingId == ingredient.id) dragOffset else 0f,
+                    requestFocus = focusId == ingredient.id,
+                    viewModel = viewModel,
+                    onToggle = {
+                        expandedId = if (expandedId == ingredient.id) null else ingredient.id
+                        focusId = null
+                    },
+                    onChange = { changed ->
+                        update { current -> current.copy(ingredients = current.ingredients.map { if (it.id == changed.id) changed else it }) }
+                    },
+                    onDelete = {
+                        update { current -> current.copy(ingredients = current.ingredients.filterNot { it.id == ingredient.id }) }
+                        if (expandedId == ingredient.id) expandedId = null
+                    },
+                    onDragStart = { expandedId = null; focusId = null; draggingId = ingredient.id; dragOffset = 0f },
+                    onDrag = { delta ->
+                        dragOffset += delta
+                        if (kotlin.math.abs(dragOffset) >= moveThreshold) {
+                            val currentIndex = draft.ingredients.indexOfFirst { it.id == ingredient.id }
+                            val target = currentIndex + if (dragOffset > 0) 1 else -1
+                            if (currentIndex >= 0 && target in draft.ingredients.indices) {
+                                update { current -> current.copy(ingredients = current.ingredients.moved(currentIndex, target)) }
+                            }
+                            dragOffset = 0f
+                        }
+                    },
+                    onDragEnd = { draggingId = null; dragOffset = 0f },
+                    onCreateCustomFood = { onCreateCustomFood(ingredient.id, ingredient.name) },
+                    onEditCustomFood = { foodId -> onEditCustomFood(ingredient.id, foodId, ingredient.name) }
+                )
+            }
+        }
+        Surface(
+            color = MintWash,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 24.dp)
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
+                Icon(Icons.Rounded.Lightbulb, null, tint = Herb, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Use the handle to reorder. Ingredients collapse automatically while dragging.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
 @Composable
-private fun IngredientEditor(
-    number: Int,
+private fun CompactIngredientEditor(
     item: IngredientDraft,
+    expanded: Boolean,
+    dragging: Boolean,
+    dragOffset: Float,
+    requestFocus: Boolean,
     viewModel: CookbookViewModel,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
+    onToggle: () -> Unit,
     onChange: (IngredientDraft) -> Unit,
     onDelete: () -> Unit,
-    onMove: (Int) -> Unit
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onCreateCustomFood: () -> Unit,
+    onEditCustomFood: (String) -> Unit
 ) {
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("INGREDIENT ${number.toString().padStart(2, '0')}", style = MaterialTheme.typography.labelMedium, color = Herb, modifier = Modifier.weight(1f))
-                IconButton(onClick = { onMove(-1) }, enabled = canMoveUp) { Icon(Icons.Rounded.KeyboardArrowUp, "Move up") }
-                IconButton(onClick = { onMove(1) }, enabled = canMoveDown) { Icon(Icons.Rounded.KeyboardArrowDown, "Move down") }
-                IconButton(onClick = onDelete) { Icon(Icons.Rounded.DeleteOutline, "Delete", tint = Muted) }
-            }
-            FoodAutocompleteField(item = item, viewModel = viewModel, onChange = onChange)
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    item.quantityText,
-                    { raw -> if (raw.all { it.isDigit() || it == '.' || it == '/' }) onChange(item.copy(quantityText = raw)) },
-                    label = { Text("Quantity") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f)
+    val focusRequester = remember(item.id) { FocusRequester() }
+    var resolvedGrams by remember(item.id) { mutableStateOf<Double?>(null) }
+    LaunchedEffect(requestFocus, expanded) { if (requestFocus && expanded) focusRequester.requestFocus() }
+    LaunchedEffect(item.foodId, item.quantityText, item.unit) {
+        resolvedGrams = viewModel.resolveIngredientGrams(item.foodId, item.quantityText, item.unit)
+    }
+    Surface(
+        shape = RoundedCornerShape(if (expanded) 16.dp else 0.dp),
+        color = if (expanded) MaterialTheme.colorScheme.surfaceVariant else Paper,
+        border = if (expanded || dragging) BorderStroke(1.dp, if (dragging) Herb else Line) else null,
+        shadowElevation = if (dragging) 7.dp else 0.dp,
+        modifier = Modifier.fillMaxWidth().zIndex(if (dragging) 2f else 0f).graphicsLayer { translationY = dragOffset }
+    ) {
+        Column {
+            Row(Modifier.fillMaxWidth().heightIn(min = 54.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.DragHandle,
+                    "Drag to reorder",
+                    tint = Muted,
+                    modifier = Modifier.padding(horizontal = 10.dp).size(22.dp).pointerInput(item.id) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { onDragStart() },
+                            onDragEnd = onDragEnd,
+                            onDragCancel = onDragEnd,
+                            onDrag = { change, amount -> change.consume(); onDrag(amount.y) }
+                        )
+                    }
                 )
-                UnitMenu(item.unit, onSelect = { onChange(item.copy(unit = it)) }, modifier = Modifier.weight(1f))
+                Row(Modifier.weight(1f).clickable(onClick = onToggle).padding(vertical = 13.dp, horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(item.name.ifBlank { "New ingredient" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    if (item.foodSource == FoodSource.CUSTOM) CustomBadge()
+                    Spacer(Modifier.width(8.dp))
+                    Text(naturalIngredientAmount(item), color = Muted, style = MaterialTheme.typography.labelMedium)
+                    Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ChevronRight, null, tint = Muted, modifier = Modifier.size(20.dp))
+                }
             }
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("1/4", "1/3", "1/2", "2/3", "3/4").forEach { fraction ->
-                    SuggestionChip(onClick = { onChange(item.copy(quantityText = fraction)) }, label = { Text(fraction) })
+            if (expanded) Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                FoodAutocompleteField(
+                    item = item,
+                    viewModel = viewModel,
+                    onChange = onChange,
+                    focusRequester = focusRequester,
+                    onCreateCustomFood = onCreateCustomFood
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        item.quantityText,
+                        { raw -> if (raw.all { it.isDigit() || it == '.' || it == '/' }) onChange(item.copy(quantityText = raw)) },
+                        label = { Text("Amount") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f).height(58.dp)
+                    )
+                    UnitMenu(item.unit, onSelect = { onChange(item.copy(unit = it, gramsEquivalent = null)) }, modifier = Modifier.weight(1f))
+                }
+                Text("Quick amounts", color = Muted, style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("1/4", "1/3", "1/2", "2/3", "3/4", "1").forEach { fraction ->
+                        SuggestionChip(onClick = { onChange(item.copy(quantityText = fraction)) }, label = { Text(fraction) })
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(if (resolvedGrams != null) Icons.Rounded.CheckCircle else Icons.Rounded.Info, null, tint = if (resolvedGrams != null) Herb else Muted, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        resolvedGrams?.let { "≈ ${formatQuantity(it)} g · ${if (item.foodSource == FoodSource.CUSTOM) "Custom serving" else "USDA conversion"}" }
+                            ?: if (item.foodId == null) "Select a food to calculate nutrition" else "No supported gram conversion",
+                        color = if (resolvedGrams != null) Herb else Muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (item.foodSource == FoodSource.CUSTOM && item.foodId != null) TextButton(onClick = { onEditCustomFood(item.foodId) }) { Text("Edit") }
+                }
+                TextButton(onClick = onDelete, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                    Icon(Icons.Rounded.DeleteOutline, null); Spacer(Modifier.width(6.dp)); Text("Remove ingredient")
                 }
             }
         }
@@ -226,28 +388,30 @@ private fun IngredientEditor(
 private fun FoodAutocompleteField(
     item: IngredientDraft,
     viewModel: CookbookViewModel,
-    onChange: (IngredientDraft) -> Unit
+    onChange: (IngredientDraft) -> Unit,
+    focusRequester: FocusRequester,
+    onCreateCustomFood: () -> Unit
 ) {
-    var suggestions by remember(item.id) { mutableStateOf(emptyList<FoodEntity>()) }
+    var suggestions by remember(item.id) { mutableStateOf(emptyList<FoodSearchResult>()) }
     LaunchedEffect(item.name, item.foodId) {
         suggestions = emptyList()
         if (item.foodId == null && item.name.trim().length >= 2) {
             delay(180)
-            suggestions = viewModel.searchFoods(item.name)
+            suggestions = viewModel.searchFoodOptions(item.name)
         }
     }
 
     Column {
         OutlinedTextField(
             value = item.name,
-            onValueChange = { onChange(item.copy(name = it, foodId = null, gramsEquivalent = null)) },
-            label = { Text("Ingredient name") },
+            onValueChange = { onChange(item.copy(name = it, foodId = null, gramsEquivalent = null, foodSource = null)) },
+            label = { Text("Food") },
             singleLine = true,
             trailingIcon = {
-                if (item.foodId != null) Icon(Icons.Rounded.CheckCircle, "Matched to USDA food", tint = Herb)
+                if (item.foodId != null) Icon(Icons.Rounded.CheckCircle, "Matched food", tint = Herb)
             },
-            supportingText = if (item.foodId != null) ({ Text("USDA Foundation food", color = Herb) }) else null,
-            modifier = Modifier.fillMaxWidth()
+            supportingText = if (item.foodId != null) ({ Text(if (item.foodSource == FoodSource.CUSTOM) "My Food" else "USDA food", color = Herb) }) else null,
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
         )
         if (suggestions.isNotEmpty()) {
             Surface(
@@ -257,22 +421,29 @@ private fun FoodAutocompleteField(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
             ) {
                 Column {
-                    suggestions.take(6).forEach { food ->
+                    suggestions.take(8).forEach { result ->
+                        val food = result.food
                         Row(
                             Modifier.fillMaxWidth().clickable {
-                                onChange(item.copy(name = food.name, foodId = food.foodId, gramsEquivalent = null))
+                                onChange(item.copy(name = food.name, foodId = food.foodId, gramsEquivalent = null, foodSource = food.foodSource))
                                 suggestions = emptyList()
                             }.padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(food.name, style = MaterialTheme.typography.bodyMedium)
-                                Text(food.category.name.replace('_', ' ').lowercase(), style = MaterialTheme.typography.labelMedium, color = Muted)
+                                Text(result.servingLabel ?: food.name, style = MaterialTheme.typography.labelMedium, color = Muted, maxLines = 1)
                             }
-                            Text("USDA", style = MaterialTheme.typography.labelMedium, color = Herb)
+                            if (food.foodSource == FoodSource.CUSTOM) CustomBadge() else Text("USDA", style = MaterialTheme.typography.labelMedium, color = Herb)
                         }
+                        HorizontalDivider(color = Line)
                     }
                 }
+            }
+        }
+        if (item.foodId == null && item.name.isNotBlank()) {
+            TextButton(onClick = onCreateCustomFood, modifier = Modifier.align(Alignment.End)) {
+                Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("Create custom food")
             }
         }
     }
@@ -282,7 +453,7 @@ private fun FoodAutocompleteField(
 private fun UnitMenu(selected: IngredientUnit, onSelect: (IngredientUnit) -> Unit, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        OutlinedButton(onClick = { open = true }, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line), modifier = Modifier.fillMaxWidth().height(58.dp)) {
             Text(if (selected == IngredientUnit.NONE) "No unit" else selected.label, modifier = Modifier.weight(1f))
             Icon(Icons.Rounded.ArrowDropDown, null)
         }
@@ -292,6 +463,19 @@ private fun UnitMenu(selected: IngredientUnit, onSelect: (IngredientUnit) -> Uni
             }
         }
     }
+}
+
+@Composable
+private fun CustomBadge() {
+    Surface(color = Color(0xFFEDE8FF), shape = RoundedCornerShape(6.dp)) {
+        Text("CUSTOM", color = Color(0xFF58439A), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+    }
+}
+
+private fun naturalIngredientAmount(item: IngredientDraft): String {
+    val quantity = formatQuantity(parseQuantity(item.quantityText))
+    val unit = if (item.unit == IngredientUnit.NONE) "" else item.unit.label
+    return listOf(quantity, unit).filter(String::isNotBlank).joinToString(" ")
 }
 
 @Composable
@@ -371,6 +555,16 @@ fun naturalIngredient(item: IngredientDraft): String {
     val quantity = formatQuantity(parseQuantity(item.quantityText))
     val unit = if (item.unit == IngredientUnit.NONE) "" else item.unit.label
     return listOf(quantity, unit, item.name.trim()).filter { it.isNotBlank() }.joinToString(" ")
+}
+
+/** Returns the editor page and message for the first genuinely required field. */
+fun validateRecipeDraft(draft: RecipeDraft): Pair<Int, String>? = when {
+    draft.name.isBlank() -> 0 to "Add a recipe name before saving."
+    draft.category == null -> 0 to "Choose a recipe category before saving."
+    (draft.servingsText.toIntOrNull() ?: 0) <= 0 -> 0 to "Enter at least one serving before saving."
+    draft.ingredients.none { it.name.isNotBlank() } -> 1 to "Add at least one ingredient before saving."
+    draft.steps.none { it.text.isNotBlank() } -> 2 to "Add at least one cooking step before saving."
+    else -> null
 }
 
 private fun copyImageToApp(context: Context, uri: Uri): String? = runCatching {

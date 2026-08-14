@@ -70,8 +70,11 @@ data class FoodEntity(
 
     // Provenance lets us trace a value back to the source dataset.
     val source: String,
-    val sourceFoodId: String?
+    val sourceFoodId: String?,
+    val foodSource: FoodSource = FoodSource.USDA
 )
+
+enum class FoodSource { USDA, CUSTOM }
 
 enum class FoodCategory {
     MEAT,

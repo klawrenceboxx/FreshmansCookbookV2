@@ -10,7 +10,7 @@ enum class RecipeCategory(val label: String) {
 }
 
 enum class IngredientUnit(val label: String) {
-    NONE("none"), G("g"), KG("kg"), OZ("oz"), LB("lb"), ML("ml"), L("L"), TSP("tsp"), TBSP("tbsp"), CUP("cup"), PIECE("piece")
+    NONE("none"), G("g"), KG("kg"), OZ("oz"), LB("lb"), ML("ml"), L("L"), TSP("tsp"), TBSP("tbsp"), CUP("cup"), PIECE("piece"), SCOOP("scoop")
 }
 
 @Entity(tableName = "recipes")

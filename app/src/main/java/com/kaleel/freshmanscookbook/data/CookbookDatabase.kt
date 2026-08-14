@@ -53,11 +53,17 @@ interface FoodDao {
     @Query("DELETE FROM food_aliases")
     suspend fun deleteAllAliases()
 
-    @Query("DELETE FROM food_portions")
-    suspend fun deleteAllPortions()
+    @Query("DELETE FROM food_portions WHERE foodId IN (SELECT foodId FROM foods WHERE foodSource = 'USDA')")
+    suspend fun deleteAllUsdaPortions()
+
+    @Query("DELETE FROM food_portions WHERE foodId = :foodId")
+    suspend fun deletePortionsForFood(foodId: String)
 
     @Query("SELECT * FROM foods ORDER BY name")
     suspend fun getAllFoods(): List<FoodEntity>
+
+    @Query("SELECT * FROM foods WHERE foodSource = 'USDA' ORDER BY name")
+    suspend fun getAllUsdaFoods(): List<FoodEntity>
 
     @Query("SELECT * FROM foods WHERE foodId IN (:foodIds)")
     suspend fun getByIds(foodIds: List<String>): List<FoodEntity>
@@ -68,7 +74,11 @@ interface FoodDao {
         LEFT JOIN food_aliases ON food_aliases.foodId = foods.foodId
         WHERE foods.searchName LIKE '%' || :query || '%'
            OR food_aliases.alias LIKE '%' || :query || '%'
-        ORDER BY CASE WHEN foods.searchName LIKE :query || '%' THEN 0 ELSE 1 END, foods.name
+        ORDER BY CASE
+            WHEN foods.searchName = :query THEN 0
+            WHEN foods.searchName LIKE :query || '%' THEN 1
+            ELSE 2
+        END, foods.name
         LIMIT :limit
         """
     )
@@ -76,6 +86,18 @@ interface FoodDao {
 
     @Query("SELECT * FROM food_portions WHERE foodId = :foodId AND unit = :unit ORDER BY description")
     suspend fun portions(foodId: String, unit: IngredientUnit): List<FoodPortionEntity>
+}
+
+@Dao
+interface CustomFoodDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(food: CustomFoodEntity)
+
+    @Query("SELECT * FROM custom_foods WHERE foodId = :foodId")
+    suspend fun get(foodId: String): CustomFoodEntity?
+
+    @Query("SELECT * FROM custom_foods WHERE foodId IN (:foodIds)")
+    suspend fun getByIds(foodIds: List<String>): List<CustomFoodEntity>
 }
 
 data class RecipeWithItems(
@@ -108,6 +130,9 @@ class Converters {
     @TypeConverter fun foodCategoryToString(value: FoodCategory) = value.name
     @TypeConverter fun stringToFoodCategory(value: String) = FoodCategory.valueOf(value)
 
+    @TypeConverter fun foodSourceToString(value: FoodSource) = value.name
+    @TypeConverter fun stringToFoodSource(value: String) = FoodSource.valueOf(value)
+
     @TypeConverter fun biologicalSexToString(value: BiologicalSex) = value.name
     @TypeConverter fun stringToBiologicalSex(value: String) = BiologicalSex.valueOf(value)
 
@@ -126,18 +151,20 @@ class Converters {
         FoodEntity::class,
         FoodAliasEntity::class,
         FoodPortionEntity::class,
+        CustomFoodEntity::class,
         NutritionProfileEntity::class,
         MealLogEntity::class,
         MealLogIngredientEntity::class,
         FoodLogEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class CookbookDatabase : RoomDatabase() {
     abstract fun recipeDao(): RecipeDao
     abstract fun foodDao(): FoodDao
+    abstract fun customFoodDao(): CustomFoodDao
     abstract fun profileDao(): ProfileDao
     abstract fun mealLogDao(): MealLogDao
     abstract fun foodLogDao(): FoodLogDao
@@ -157,7 +184,8 @@ abstract class CookbookDatabase : RoomDatabase() {
                         MIGRATION_1_2,
                         MIGRATION_2_3,
                         MIGRATION_3_4,
-                        MIGRATION_4_5
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
                     )
                     .build()
                     .also { instance = it }
@@ -386,6 +414,31 @@ abstract class CookbookDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS `index_food_logs_foodId` " +
                             "ON `food_logs` (`foodId`)"
                 )
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `foods` ADD COLUMN `foodSource` TEXT NOT NULL DEFAULT 'USDA'")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `custom_foods` (
+                        `foodId` TEXT NOT NULL, `name` TEXT NOT NULL, `searchName` TEXT NOT NULL,
+                        `description` TEXT, `servingQuantity` REAL NOT NULL, `servingUnit` TEXT NOT NULL,
+                        `servingGrams` REAL, `caloriesKcal` REAL, `proteinG` REAL,
+                        `carbohydrateG` REAL, `fatG` REAL, `fiberG` REAL, `totalSugarsG` REAL,
+                        `calciumMg` REAL, `ironMg` REAL, `magnesiumMg` REAL, `phosphorusMg` REAL,
+                        `potassiumMg` REAL, `sodiumMg` REAL, `zincMg` REAL, `copperMg` REAL,
+                        `manganeseMg` REAL, `seleniumMcg` REAL, `vitaminAMcgRae` REAL,
+                        `vitaminCMg` REAL, `vitaminDMcg` REAL, `vitaminEMg` REAL, `vitaminKMcg` REAL,
+                        `thiaminB1Mg` REAL, `riboflavinB2Mg` REAL, `niacinB3Mg` REAL,
+                        `pantothenicAcidB5Mg` REAL, `vitaminB6Mg` REAL, `folateMcg` REAL,
+                        `folateMcgDfe` REAL, `vitaminB12Mcg` REAL, `cholineMg` REAL,
+                        `saturatedFatG` REAL, `monounsaturatedFatG` REAL, `polyunsaturatedFatG` REAL,
+                        `cholesterolMg` REAL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`foodId`)
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_custom_foods_searchName` ON `custom_foods` (`searchName`)")
             }
         }
     }
