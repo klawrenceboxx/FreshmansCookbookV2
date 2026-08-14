@@ -37,7 +37,9 @@ fun DetailScreen(
     val recipes by viewModel.recipes.collectAsState()
     val recipe = recipes.firstOrNull { it.id == recipeId }
     val meal by viewModel.meal.collectAsState()
+    val mealFoods by viewModel.mealFoods.collectAsState()
     val nutrition by viewModel.recipeNutrition.collectAsState()
+    val profileNutrition by viewModel.profileNutrition.collectAsState()
     val unresolvedNutritionIds by viewModel.unresolvedNutritionIngredientIds.collectAsState()
     val pinned by viewModel.pinnedNutrient.collectAsState()
     val contributions by viewModel.pinnedContributions.collectAsState()
@@ -45,8 +47,15 @@ fun DetailScreen(
     var showDelete by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
     var nutritionExpanded by remember { mutableStateOf(false) }
+    var selectedNutrient by remember { mutableStateOf<NutrientKey?>(null) }
 
     LaunchedEffect(recipe?.id) { recipe?.let(viewModel::beginMeal) }
+    LaunchedEffect(pinned) {
+        pinned?.let { nutrient ->
+            selectedNutrient = nutrient
+            if (nutrient !in primaryNutrientKeys()) nutritionExpanded = true
+        }
+    }
     BackHandler { viewModel.endMeal(recipeId); onBack() }
 
     if (showDelete) AlertDialog(
@@ -86,35 +95,6 @@ fun DetailScreen(
                 Text(recipe.name, style = MaterialTheme.typography.headlineLarge)
                 Spacer(Modifier.height(7.dp))
                 Text("${recipe.category.label}  •  ${recipe.servings} servings", color = Muted, style = MaterialTheme.typography.bodyLarge)
-
-                Spacer(Modifier.height(24.dp))
-                NutritionNote(
-                    whole = nutrition,
-                    servings = recipe.servings,
-                    expanded = nutritionExpanded,
-                    isComplete = unresolvedNutritionIds.isEmpty(),
-                    onToggle = { nutritionExpanded = !nutritionExpanded }
-                )
-
-                if (pinnedMeta != null) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                        color = MintWash,
-                        shape = RoundedCornerShape(18.dp)
-                    ) {
-                        Column(Modifier.padding(16.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Rounded.PushPin, null, tint = Herb)
-                                Spacer(Modifier.width(8.dp))
-                                Text("${pinnedMeta.displayName} pinned", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                TextButton(onClick = { viewModel.pinNutrient(null) }) { Text("Clear") }
-                            }
-                            contributions.firstOrNull()?.let { top ->
-                                Text("${top.ingredientName} contributes the most ${pinnedMeta.displayName.lowercase()} in this meal.", color = Muted)
-                            }
-                        }
-                    }
-                }
 
                 Row(Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -161,7 +141,6 @@ fun DetailScreen(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        OutlinedButton(onClick = onForecast, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.AutoGraph, null); Spacer(Modifier.width(8.dp)); Text("If I eat this") }
                         Button(
                             onClick = viewModel::logCurrentMeal,
                             enabled = currentMeal.checkedIngredientIds.isNotEmpty() && currentMeal.checkedIngredientIds.none(unresolvedNutritionIds::contains) && logState != MealLogState.SAVING && logState != MealLogState.SAVED,
@@ -175,6 +154,52 @@ fun DetailScreen(
                         }
                     }
                 }
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp).clickable(onClick = onForecast),
+                    shape = RoundedCornerShape(16.dp),
+                    color = Paper,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Line)
+                ) {
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.AutoGraph, null, tint = Herb)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("If I eat this", style = MaterialTheme.typography.titleMedium)
+                            Text("See today’s projected nutrition", color = Muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Icon(Icons.Rounded.ChevronRight, null, tint = Muted)
+                    }
+                }
+
+                Text("Nutrition", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 30.dp, bottom = 10.dp))
+                if (unresolvedNutritionIds.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Info, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Known subtotal only · one or more ingredient amounts are unresolved.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                InteractiveNutritionLabel(
+                    totals = NutritionPresentation.forConsumedServings(nutrition, recipe.servings, currentMeal.servingsConsumed),
+                    wholeRecipeCalories = nutrition.caloriesKcal,
+                    servingLabel = "For ${formatNutrition(currentMeal.servingsConsumed)} serving${if (currentMeal.servingsConsumed == 1.0) "" else "s"} · recipe yields ${recipe.servings}",
+                    meal = currentMeal,
+                    foodsById = mealFoods,
+                    targets = profileNutrition?.targets,
+                    expanded = nutritionExpanded,
+                    selected = selectedNutrient,
+                    pinned = pinned,
+                    onToggleExpanded = { nutritionExpanded = !nutritionExpanded },
+                    onSelect = { nutrient ->
+                        selectedNutrient = if (selectedNutrient == nutrient) null else nutrient
+                        if (nutrient !in primaryNutrientKeys()) nutritionExpanded = true
+                    },
+                    onPin = { nutrient ->
+                        viewModel.pinNutrient(nutrient)
+                        selectedNutrient = nutrient ?: selectedNutrient
+                    }
+                )
                 Spacer(Modifier.height(36.dp))
             }
         }

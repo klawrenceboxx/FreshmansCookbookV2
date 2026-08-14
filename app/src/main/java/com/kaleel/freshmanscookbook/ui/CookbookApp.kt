@@ -75,8 +75,7 @@ fun CookbookApp(viewModel: CookbookViewModel) {
         composable("forecast") {
             ForecastScreen(
                 viewModel = viewModel,
-                onBack = { nav.popBackStack() },
-                onPinned = { nav.popBackStack() }
+                onBack = { nav.popBackStack() }
             )
         }
     }

@@ -89,7 +89,7 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
 
     val pinnedContributions = combine(_meal, _mealFoods, _pinnedNutrient) { currentMeal, foods, nutrient ->
         if (currentMeal == null || nutrient == null) emptyList()
-        else MealNutritionCalculator.rankedContributions(currentMeal, foods, nutrient)
+        else MealNutritionCalculator.rankedContributions(currentMeal, foods, nutrient, applyConsumedServingScale = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
