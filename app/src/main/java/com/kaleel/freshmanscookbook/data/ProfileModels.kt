@@ -19,7 +19,10 @@ data class NutritionProfile(
      * Optional manual overrides let a user replace calculated guidance without
      * changing the underlying profile.
      */
-    val overrides: NutritionTargetOverrides = NutritionTargetOverrides()
+    val overrides: NutritionTargetOverrides = NutritionTargetOverrides(),
+
+    /** Training focus can grow independently from weight-change context. */
+    val trainingGoal: TrainingGoal = TrainingGoal.GENERAL_HEALTH
 )
 
 enum class BiologicalSex {
@@ -45,6 +48,20 @@ enum class NutritionGoal {
     LOSE_WEIGHT,
     MAINTAIN,
     GAIN_WEIGHT
+}
+
+enum class TrainingGoal {
+    GENERAL_HEALTH,
+    BUILD_MUSCLE
+}
+
+enum class BodyWeightUnit { KILOGRAMS, POUNDS }
+
+object BodyWeightConversion {
+    const val KILOGRAMS_PER_POUND = 0.45359237
+
+    fun poundsToKilograms(pounds: Double): Double = pounds * KILOGRAMS_PER_POUND
+    fun kilogramsToPounds(kilograms: Double): Double = kilograms / KILOGRAMS_PER_POUND
 }
 
 /**
@@ -174,8 +191,13 @@ data class NutrientTarget(
     val nutrient: NutrientKey,
     val amount: Double,
     val referenceType: NutritionReferenceType,
-    val sourceLabel: String
-)
+    val sourceLabel: String,
+    val recommendedAmount: Double = amount,
+    val recommendationLabel: String = sourceLabel
+) {
+    val isOverridden: Boolean
+        get() = referenceType == NutritionReferenceType.USER_OVERRIDE
+}
 
 enum class NutritionReferenceType {
     CALCULATED_ESTIMATE,
@@ -202,7 +224,16 @@ data class NutritionTargetOverrides(
     val proteinG: Double? = null,
     val carbohydrateG: Double? = null,
     val fatG: Double? = null,
-    val fiberG: Double? = null
+    val fiberG: Double? = null,
+    /** Canonical milliliters; null means use the profile recommendation. */
+    val hydrationMl: Double? = null
+)
+
+data class HydrationTarget(
+    val amountMl: Double,
+    val recommendedMl: Double,
+    val isOverridden: Boolean,
+    val recommendationLabel: String
 )
 
 /**

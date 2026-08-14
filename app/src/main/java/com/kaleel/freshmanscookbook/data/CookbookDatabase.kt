@@ -155,6 +155,9 @@ class Converters {
     @TypeConverter fun nutritionGoalToString(value: NutritionGoal) = value.name
     @TypeConverter fun stringToNutritionGoal(value: String) = NutritionGoal.valueOf(value)
 
+    @TypeConverter fun trainingGoalToString(value: TrainingGoal) = value.name
+    @TypeConverter fun stringToTrainingGoal(value: String) = TrainingGoal.valueOf(value)
+
     @TypeConverter fun waterUnitToString(value: WaterUnit) = value.name
     @TypeConverter fun stringToWaterUnit(value: String) = WaterUnit.valueOf(value)
 
@@ -179,7 +182,7 @@ class Converters {
         WaterLogEntity::class,
         HydrationPreferencesEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -210,7 +213,8 @@ abstract class CookbookDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9
                     )
                     .build()
                     .also { instance = it }
@@ -516,6 +520,17 @@ abstract class CookbookDatabase : RoomDatabase() {
                         `bottleMl` REAL,
                         PRIMARY KEY(`id`)
                     )"""
+                )
+            }
+        }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `nutrition_profile` ADD COLUMN `trainingGoal` TEXT NOT NULL DEFAULT 'GENERAL_HEALTH'"
+                )
+                db.execSQL(
+                    "ALTER TABLE `nutrition_profile` ADD COLUMN `hydrationOverrideMl` REAL"
                 )
             }
         }

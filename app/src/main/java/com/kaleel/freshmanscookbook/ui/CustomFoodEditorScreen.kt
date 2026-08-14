@@ -74,13 +74,13 @@ fun CustomFoodEditorScreen(
 
             Text("Default serving", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MatchingTextField(
+                QuantityAmountField(
                     value = servingQuantity,
                     onValueChange = { servingQuantity = numericText(it); error = null },
-                    label = "Amount",
-                    modifier = Modifier.weight(.8f)
+                    modifier = Modifier.weight(.8f),
+                    allowFractions = false
                 )
-                CustomServingUnitMenu(servingUnit, { servingUnit = it; error = null }, Modifier.weight(1.2f))
+                FoodUnitMenu(servingUnit, { servingUnit = it; error = null }, Modifier.weight(1.2f), includeNone = false)
             }
             MatchingTextField(
                 value = servingGrams,
@@ -183,22 +183,6 @@ private fun NutrientEntryRow(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.width(150.dp)
         )
-    }
-}
-
-@Composable
-private fun CustomServingUnitMenu(selected: IngredientUnit, onSelect: (IngredientUnit) -> Unit, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        OutlinedButton(onClick = { open = true }, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().height(58.dp)) {
-            Text(selected.label, modifier = Modifier.weight(1f))
-            Icon(Icons.Rounded.ArrowDropDown, null)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            IngredientUnit.entries.filter { it != IngredientUnit.NONE }.forEach { unit ->
-                DropdownMenuItem(text = { Text(unit.label) }, onClick = { onSelect(unit); open = false })
-            }
-        }
     }
 }
 

@@ -415,16 +415,12 @@ private fun CompactIngredientEditor(
                     onCreateCustomFood = onCreateCustomFood
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
+                    QuantityAmountField(
                         item.quantityText,
-                        { raw -> if (raw.all { it.isDigit() || it == '.' || it == '/' }) onChange(item.copy(quantityText = raw)) },
-                        label = { Text("Amount") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f).height(58.dp)
+                        { raw -> onChange(item.copy(quantityText = raw)) },
+                        modifier = Modifier.weight(1f)
                     )
-                    UnitMenu(item.unit, onSelect = { onChange(item.copy(unit = it, gramsEquivalent = null)) }, modifier = Modifier.weight(1f))
+                    FoodUnitMenu(item.unit, onSelect = { onChange(item.copy(unit = it, gramsEquivalent = null)) }, modifier = Modifier.weight(1f))
                 }
                 Text("Quick amounts", color = Muted, style = MaterialTheme.typography.labelMedium)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -558,22 +554,6 @@ private fun FoodAutocompleteField(
                 onClick = { renameValue = item.name; showRename = true },
                 modifier = Modifier.align(Alignment.End)
             ) { Icon(Icons.Rounded.Edit, null, Modifier.size(17.dp)); Spacer(Modifier.width(5.dp)); Text("Rename display") }
-        }
-    }
-}
-
-@Composable
-private fun UnitMenu(selected: IngredientUnit, onSelect: (IngredientUnit) -> Unit, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
-    Box(modifier) {
-        OutlinedButton(onClick = { open = true }, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Line), modifier = Modifier.fillMaxWidth().height(58.dp)) {
-            Text(if (selected == IngredientUnit.NONE) "No unit" else selected.label, modifier = Modifier.weight(1f))
-            Icon(Icons.Rounded.ArrowDropDown, null)
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            IngredientUnit.entries.forEach { unit ->
-                DropdownMenuItem(text = { Text(if (unit == IngredientUnit.NONE) "none" else unit.label) }, onClick = { onSelect(unit); open = false })
-            }
         }
     }
 }

@@ -78,14 +78,7 @@ fun AddFoodScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onLogged: ()
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    quantity,
-                    { quantity = it; error = null },
-                    label = { Text("Quantity") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
+                QuantityAmountField(quantity, { quantity = it; error = null }, Modifier.weight(1f), label = "Quantity")
                 FoodUnitMenu(unit, { unit = it; error = null }, Modifier.weight(1f))
             }
             Text("Mass units always work. Household units require a saved food-specific gram conversion.", color = Muted, style = MaterialTheme.typography.bodySmall)

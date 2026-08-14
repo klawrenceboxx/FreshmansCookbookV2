@@ -15,6 +15,9 @@ import androidx.compose.ui.unit.dp
 import com.kaleel.freshmanscookbook.data.*
 import java.text.DecimalFormat
 
+val PairedInputShape = RoundedCornerShape(12.dp)
+val PairedInputHeight = 58.dp
+
 private val primaryNutrients = listOf(
     NutrientKey.CALORIES,
     NutrientKey.PROTEIN,
@@ -259,15 +262,47 @@ fun formatNutrientValue(
 }
 
 @Composable
-fun FoodUnitMenu(selected: IngredientUnit, onSelect: (IngredientUnit) -> Unit, modifier: Modifier = Modifier) {
+fun QuantityAmountField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String = "Amount",
+    allowFractions: Boolean = true
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { raw ->
+            if (raw.all { it.isDigit() || it == '.' || (allowFractions && it == '/') }) onValueChange(raw)
+        },
+        label = { Text(label) },
+        singleLine = true,
+        shape = PairedInputShape,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal),
+        modifier = modifier.height(PairedInputHeight)
+    )
+}
+
+@Composable
+fun FoodUnitMenu(
+    selected: IngredientUnit,
+    onSelect: (IngredientUnit) -> Unit,
+    modifier: Modifier = Modifier,
+    includeNone: Boolean = true
+) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
-        OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+        OutlinedButton(
+            onClick = { open = true },
+            shape = PairedInputShape,
+            border = BorderStroke(1.dp, Line),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().height(PairedInputHeight)
+        ) {
             Text(if (selected == IngredientUnit.NONE) "No unit" else selected.label, modifier = Modifier.weight(1f))
             Icon(Icons.Rounded.ArrowDropDown, null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            IngredientUnit.entries.forEach { unit ->
+            IngredientUnit.entries.filter { includeNone || it != IngredientUnit.NONE }.forEach { unit ->
                 DropdownMenuItem(text = { Text(if (unit == IngredientUnit.NONE) "none" else unit.label) }, onClick = { onSelect(unit); open = false })
             }
         }

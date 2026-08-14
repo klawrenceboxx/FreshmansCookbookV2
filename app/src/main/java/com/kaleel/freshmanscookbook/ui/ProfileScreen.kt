@@ -53,6 +53,7 @@ fun ProfileScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onAddFood: (
         if (profile == null || editing) {
             ProfileForm(
                 initial = profile,
+                waterDisplayUnit = hydration.preferences.displayUnit,
                 modifier = Modifier.padding(padding),
                 onCancel = if (profile != null) ({ editing = false }) else null,
                 onSave = { viewModel.saveProfile(it); editing = false }
@@ -61,6 +62,7 @@ fun ProfileScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onAddFood: (
             NutritionDashboard(
                 day = day,
                 hydration = hydration,
+                hydrationTarget = profileState?.hydrationTarget,
                 targets = profileState?.targets,
                 onAddFood = onAddFood,
                 onDeleteMeal = viewModel::deleteMealLog,
@@ -80,6 +82,7 @@ fun ProfileScreen(viewModel: CookbookViewModel, onBack: () -> Unit, onAddFood: (
 private fun NutritionDashboard(
     day: DailyNutritionSnapshot,
     hydration: HydrationDaySnapshot,
+    hydrationTarget: HydrationTarget?,
     targets: DailyNutritionTargets?,
     onAddFood: () -> Unit,
     onDeleteMeal: (String) -> Unit,
@@ -114,19 +117,20 @@ private fun NutritionDashboard(
             }
         }
 
-        LoggedMealsSection(
-            day = day,
-            onDeleteMeal = { pendingDelete = HistoryDelete.Meal(it) },
-            onDeleteFood = { pendingDelete = HistoryDelete.Food(it) }
-        )
-
         HydrationSection(
             hydration = hydration,
+            target = hydrationTarget,
             onAdd = { showWaterDialog = true },
             onLogBottle = onLogBottle,
             onConfigureBottle = { showBottleDialog = true },
             onDisplayUnit = onSetWaterDisplayUnit,
             onDelete = { pendingDelete = HistoryDelete.Water(it) }
+        )
+
+        LoggedMealsSection(
+            day = day,
+            onDeleteMeal = { pendingDelete = HistoryDelete.Meal(it) },
+            onDeleteFood = { pendingDelete = HistoryDelete.Food(it) }
         )
 
         Text("Vitamins & minerals", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 28.dp, bottom = 8.dp))
@@ -232,6 +236,7 @@ private fun HistoryRow(name: String, detail: String, loggedAt: Long, onDelete: (
 @Composable
 private fun HydrationSection(
     hydration: HydrationDaySnapshot,
+    target: HydrationTarget?,
     onAdd: () -> Unit,
     onLogBottle: () -> Unit,
     onConfigureBottle: () -> Unit,
@@ -244,7 +249,11 @@ private fun HydrationSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.WaterDrop, null, tint = Herb)
                 Spacer(Modifier.width(9.dp))
-                Text(formatWaterTotal(hydration.totalMl, hydration.preferences.displayUnit), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                Text(
+                    formatWaterProgress(hydration.totalMl, target?.amountMl, hydration.preferences.displayUnit),
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.weight(1f)
+                )
                 FilterChip(
                     selected = hydration.preferences.displayUnit == WaterDisplayUnit.LITERS,
                     onClick = { onDisplayUnit(WaterDisplayUnit.LITERS) },
@@ -255,6 +264,19 @@ private fun HydrationSection(
                     selected = hydration.preferences.displayUnit == WaterDisplayUnit.CUPS,
                     onClick = { onDisplayUnit(WaterDisplayUnit.CUPS) },
                     label = { Text("cups") }
+                )
+            }
+            target?.amountMl?.takeIf { it > 0.0 }?.let { targetMl ->
+                LinearProgressIndicator(
+                    progress = { (hydration.totalMl / targetMl).coerceIn(0.0, 1.0).toFloat() },
+                    color = Herb,
+                    trackColor = Paper,
+                    modifier = Modifier.fillMaxWidth().height(6.dp)
+                )
+                Text(
+                    if (target.isOverridden) "Your hydration target" else target.recommendationLabel,
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -352,9 +374,11 @@ private fun WaterUnitPicker(selected: WaterUnit, onSelect: (WaterUnit) -> Unit) 
     }
 }
 
-private fun formatWaterTotal(amountMl: Double, unit: WaterDisplayUnit): String {
-    val converted = WaterConversion.fromMilliliters(amountMl, unit)
-    return "${formatNutrition(converted)} ${if (unit == WaterDisplayUnit.LITERS) "L" else "cups"} logged"
+private fun formatWaterProgress(amountMl: Double, targetMl: Double?, unit: WaterDisplayUnit): String {
+    val current = WaterConversion.fromMilliliters(amountMl, unit)
+    val symbol = if (unit == WaterDisplayUnit.LITERS) "L" else "cups"
+    return if (targetMl == null) "${formatNutrition(current)} $symbol logged"
+    else "${formatNutrition(current)} / ${formatNutrition(WaterConversion.fromMilliliters(targetMl, unit))} $symbol"
 }
 
 private fun formatEnteredWater(amount: Double, unit: WaterUnit): String =
@@ -367,21 +391,45 @@ private fun formatLogTime(timestamp: Long): String = Instant.ofEpochMilli(timest
 @Composable
 private fun ProfileForm(
     initial: NutritionProfile?,
+    waterDisplayUnit: WaterDisplayUnit,
     modifier: Modifier = Modifier,
     onCancel: (() -> Unit)?,
     onSave: suspend (NutritionProfile) -> Unit
 ) {
     var age by remember(initial) { mutableStateOf(initial?.ageYears?.toString().orEmpty()) }
     var height by remember(initial) { mutableStateOf(initial?.heightCm?.toString().orEmpty()) }
+    var weightUnit by remember(initial) { mutableStateOf(BodyWeightUnit.KILOGRAMS) }
     var weight by remember(initial) { mutableStateOf(initial?.weightKg?.toString().orEmpty()) }
     var sex by remember(initial) { mutableStateOf(initial?.sex ?: BiologicalSex.MALE) }
     var activity by remember(initial) { mutableStateOf(initial?.activityLevel ?: ActivityLevel.SEDENTARY) }
     var goal by remember(initial) { mutableStateOf(initial?.goal ?: NutritionGoal.MAINTAIN) }
+    var trainingGoal by remember(initial) { mutableStateOf(initial?.trainingGoal ?: TrainingGoal.GENERAL_HEALTH) }
+    var proteinOverride by remember(initial) { mutableStateOf(initial?.overrides?.proteinG?.let(::formatNutrition).orEmpty()) }
+    var hydrationOverride by remember(initial, waterDisplayUnit) {
+        mutableStateOf(
+            initial?.overrides?.hydrationMl
+                ?.let { WaterConversion.fromMilliliters(it, waterDisplayUnit) }
+                ?.let(::formatNutrition)
+                .orEmpty()
+        )
+    }
     val scope = rememberCoroutineScope()
     val parsedAge = age.toIntOrNull()
     val parsedHeight = height.toDoubleOrNull()
-    val parsedWeight = weight.toDoubleOrNull()
+    val enteredWeight = weight.toDoubleOrNull()
+    val parsedWeight = enteredWeight?.let { if (weightUnit == BodyWeightUnit.POUNDS) BodyWeightConversion.poundsToKilograms(it) else it }
     val valid = parsedAge in 19..120 && parsedHeight != null && parsedHeight in 100.0..250.0 && parsedWeight != null && parsedWeight in 30.0..350.0
+    val previewProfile = if (valid) NutritionProfile(
+        ageYears = parsedAge!!,
+        sex = sex,
+        heightCm = parsedHeight!!,
+        weightKg = parsedWeight!!,
+        activityLevel = activity,
+        goal = goal,
+        trainingGoal = trainingGoal
+    ) else null
+    val recommendedProtein = previewProfile?.let(NutritionTargets::proteinRecommendation)
+    val recommendedHydration = previewProfile?.let(NutritionTargets::hydrationRecommendationMl)
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text(if (initial == null) "Set up your daily guide" else "Edit your guide", style = MaterialTheme.typography.displaySmall)
@@ -390,27 +438,117 @@ private fun ProfileForm(
             NumberField(age, { age = it }, "Age", Modifier.weight(1f))
             NumberField(height, { height = it }, "Height (cm)", Modifier.weight(1f))
         }
-        NumberField(weight, { weight = it }, "Weight (kg)", Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            NumberField(weight, { weight = it }, "Weight", Modifier.weight(1f))
+            BodyWeightUnit.entries.forEach { unit ->
+                FilterChip(
+                    selected = weightUnit == unit,
+                    onClick = {
+                        enteredWeight?.let { current ->
+                            weight = formatNutrition(
+                                if (unit == BodyWeightUnit.POUNDS && weightUnit == BodyWeightUnit.KILOGRAMS) BodyWeightConversion.kilogramsToPounds(current)
+                                else if (unit == BodyWeightUnit.KILOGRAMS && weightUnit == BodyWeightUnit.POUNDS) BodyWeightConversion.poundsToKilograms(current)
+                                else current
+                            )
+                        }
+                        weightUnit = unit
+                    },
+                    label = { Text(if (unit == BodyWeightUnit.KILOGRAMS) "kg" else "lb") }
+                )
+            }
+        }
         ChoiceSection("Biological sex") {
             BiologicalSex.entries.forEach { value -> FilterChip(sex == value, { sex = value }, { Text(value.displayLabel()) }) }
         }
         ChoiceSection("Activity level") {
             ActivityLevel.entries.forEach { value -> FilterChip(activity == value, { activity = value }, { Text(value.displayLabel()) }) }
         }
-        ChoiceSection("Goal") {
+        ChoiceSection("Weight goal") {
             NutritionGoal.entries.forEach { value -> FilterChip(goal == value, { goal = value }, { Text(value.displayLabel()) }) }
         }
         Text("Your goal is saved for context. It does not automatically change the maintenance calorie estimate.", color = Muted, style = MaterialTheme.typography.bodySmall)
+        ChoiceSection("Nutrition & training") {
+            TrainingGoal.entries.forEach { value -> FilterChip(trainingGoal == value, { trainingGoal = value }, { Text(value.displayLabel()) }) }
+        }
+        TargetOverrideCard(
+            title = "Protein",
+            recommended = recommendedProtein?.let { "${formatNutrition(it)} g/day" } ?: "Enter profile details",
+            explanation = if (trainingGoal == TrainingGoal.BUILD_MUSCLE) "Build muscle · ${NutritionTargets.BUILD_MUSCLE_PROTEIN_G_PER_KG} g/kg" else "General health · ${NutritionTargets.GENERAL_HEALTH_PROTEIN_G_PER_KG} g/kg",
+            value = proteinOverride,
+            onValueChange = { proteinOverride = numericText(it) },
+            suffix = "g/day",
+            onUseRecommended = { proteinOverride = "" }
+        )
+        TargetOverrideCard(
+            title = "Water",
+            recommended = recommendedHydration?.let { "${formatNutrition(WaterConversion.fromMilliliters(it, waterDisplayUnit))} ${if (waterDisplayUnit == WaterDisplayUnit.LITERS) "L" else "cups"}/day" } ?: "Enter profile details",
+            explanation = "Beverage-water guide · food moisture not included",
+            value = hydrationOverride,
+            onValueChange = { hydrationOverride = numericText(it) },
+            suffix = if (waterDisplayUnit == WaterDisplayUnit.LITERS) "L/day" else "cups/day",
+            onUseRecommended = { hydrationOverride = "" }
+        )
         if (!valid && listOf(age, height, weight).all(String::isNotBlank)) Text("Enter an adult age (19–120), height (100–250 cm), and weight (30–350 kg).", color = MaterialTheme.colorScheme.error)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (onCancel != null) OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Cancel") }
             Button(
-                onClick = { scope.launch { onSave(NutritionProfile(parsedAge!!, sex, parsedHeight!!, parsedWeight!!, activity, goal, initial?.overrides ?: NutritionTargetOverrides())) } },
+                onClick = {
+                    val existing = initial?.overrides ?: NutritionTargetOverrides()
+                    val hydrationMl = hydrationOverride.toDoubleOrNull()?.takeIf { it > 0.0 }?.let {
+                        WaterConversion.toMilliliters(it, if (waterDisplayUnit == WaterDisplayUnit.LITERS) WaterUnit.LITERS else WaterUnit.CUPS)
+                    }
+                    scope.launch {
+                        onSave(
+                            NutritionProfile(
+                                ageYears = parsedAge!!,
+                                sex = sex,
+                                heightCm = parsedHeight!!,
+                                weightKg = parsedWeight!!,
+                                activityLevel = activity,
+                                goal = goal,
+                                overrides = existing.copy(
+                                    proteinG = proteinOverride.toDoubleOrNull()?.takeIf { it > 0.0 },
+                                    hydrationMl = hydrationMl
+                                ),
+                                trainingGoal = trainingGoal
+                            )
+                        )
+                    }
+                },
                 enabled = valid,
                 modifier = Modifier.weight(1f)
             ) { Text("Save profile") }
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun TargetOverrideCard(
+    title: String,
+    recommended: String,
+    explanation: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    suffix: String,
+    onUseRecommended: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text("Recommended · $recommended", color = Herb, style = MaterialTheme.typography.labelLarge)
+            Text(explanation, color = Muted, style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                label = { Text("My target (optional)") },
+                suffix = { Text(suffix) },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (value.isNotBlank()) TextButton(onClick = onUseRecommended, modifier = Modifier.align(Alignment.End)) { Text("Use recommended") }
+        }
     }
 }
 
@@ -430,3 +568,5 @@ private fun ChoiceSection(title: String, content: @Composable RowScope.() -> Uni
 private fun BiologicalSex.displayLabel() = if (this == BiologicalSex.MALE) "Male" else "Female"
 private fun ActivityLevel.displayLabel() = name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
 private fun NutritionGoal.displayLabel() = name.lowercase().replace('_', ' ').replaceFirstChar(Char::uppercase)
+private fun TrainingGoal.displayLabel() = if (this == TrainingGoal.BUILD_MUSCLE) "Build muscle" else "General health"
+private fun numericText(value: String): String = value.filter { it.isDigit() || it == '.' }

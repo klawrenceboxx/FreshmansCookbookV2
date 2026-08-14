@@ -9,7 +9,11 @@ package com.kaleel.freshmanscookbook.data
  *
  * Design choices for V1:
  * - Calories: DRI EER using age, sex, height, weight and activity category.
- * - Protein: adult RDA = 0.8 g/kg/day.
+ * - Protein: adult RDA = 0.8 g/kg/day for General Health; Build Muscle uses
+ *   1.8 g/kg/day. Morton et al. (2018, BJSM, PMID 28698222) found the pooled
+ *   resistance-training benefit plateau near 1.6 g/kg/day. 1.8 provides a
+ *   practical buffer within the commonly used 1.6-2.2 g/kg range without
+ *   presenting 1 g/lb as a universal requirement.
  * - Carbohydrate: adult RDA = 130 g/day.
  * - Fibre: DRI age/sex AI values.
  * - Total fat: midpoint of the adult AMDR (20-35% energy) as a simple
@@ -33,7 +37,8 @@ object NutritionTargets {
         require(profile.weightKg > 0.0) { "Weight must be greater than 0 kg." }
 
         val calories = profile.overrides.caloriesKcal ?: estimatedEnergyRequirement(profile)
-        val protein = profile.overrides.proteinG ?: (0.8 * profile.weightKg)
+        val recommendedProtein = proteinRecommendation(profile)
+        val protein = profile.overrides.proteinG ?: recommendedProtein
         val carbs = profile.overrides.carbohydrateG ?: 130.0
 
         // Adult AMDR for total fat is 20-35% of energy.
@@ -68,12 +73,19 @@ object NutritionTargets {
             if (profile.overrides.caloriesKcal != null) USER_SOURCE else EER_SOURCE
         )
 
-        addWithOverride(
-            targets,
-            NutrientKey.PROTEIN,
-            protein,
-            profile.overrides.proteinG,
-            NutritionReferenceType.RDA
+        val proteinLabel = when (profile.trainingGoal) {
+            TrainingGoal.GENERAL_HEALTH -> "General health · $GENERAL_HEALTH_PROTEIN_G_PER_KG g/kg"
+            TrainingGoal.BUILD_MUSCLE -> "Build muscle · $BUILD_MUSCLE_PROTEIN_G_PER_KG g/kg"
+        }
+        targets[NutrientKey.PROTEIN] = NutrientTarget(
+            nutrient = NutrientKey.PROTEIN,
+            amount = protein,
+            referenceType = if (profile.overrides.proteinG != null) NutritionReferenceType.USER_OVERRIDE
+            else if (profile.trainingGoal == TrainingGoal.BUILD_MUSCLE) NutritionReferenceType.GUIDELINE
+            else NutritionReferenceType.RDA,
+            sourceLabel = if (profile.overrides.proteinG != null) USER_SOURCE else proteinLabel,
+            recommendedAmount = recommendedProtein,
+            recommendationLabel = proteinLabel
         )
         addWithOverride(
             targets,
@@ -126,6 +138,37 @@ object NutritionTargets {
         add(NutrientKey.CHOLINE, if (profile.sex == BiologicalSex.MALE) 550.0 else 425.0, NutritionReferenceType.AI)
 
         return DailyNutritionTargets(targets)
+    }
+
+    fun proteinFactor(profile: NutritionProfile): Double = when (profile.trainingGoal) {
+        TrainingGoal.GENERAL_HEALTH -> GENERAL_HEALTH_PROTEIN_G_PER_KG
+        TrainingGoal.BUILD_MUSCLE -> BUILD_MUSCLE_PROTEIN_G_PER_KG
+    }
+
+    fun proteinRecommendation(profile: NutritionProfile): Double =
+        profile.weightKg * proteinFactor(profile)
+
+    /**
+     * Beverage-water target, not total-water intake and not a prescription.
+     * National Academies/Health Canada DRI guidance gives total-water AIs of
+     * 3.7 L for men and 2.7 L for women, with about 81% observed from water and
+     * beverages. Rounded beverage equivalents are therefore 3.0 L and 2.2 L.
+     * Food moisture remains outside this app's water logger.
+     */
+    fun hydrationRecommendationMl(profile: NutritionProfile): Double = when (profile.sex) {
+        BiologicalSex.MALE -> 3_000.0
+        BiologicalSex.FEMALE -> 2_200.0
+    }
+
+    fun hydrationTarget(profile: NutritionProfile): HydrationTarget {
+        val recommended = hydrationRecommendationMl(profile)
+        val override = profile.overrides.hydrationMl?.takeIf { it > 0.0 }
+        return HydrationTarget(
+            amountMl = override ?: recommended,
+            recommendedMl = recommended,
+            isOverridden = override != null,
+            recommendationLabel = "Beverage-water guide · food moisture not included"
+        )
     }
 
     /**
@@ -249,4 +292,7 @@ object NutritionTargets {
         "Dietary Reference Intakes Estimated Energy Requirement equation"
 
     private const val USER_SOURCE = "User-defined target"
+
+    const val GENERAL_HEALTH_PROTEIN_G_PER_KG = 0.8
+    const val BUILD_MUSCLE_PROTEIN_G_PER_KG = 1.8
 }

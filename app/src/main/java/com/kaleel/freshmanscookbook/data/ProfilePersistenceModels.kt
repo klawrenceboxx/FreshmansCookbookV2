@@ -2,6 +2,7 @@ package com.kaleel.freshmanscookbook.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 /**
  * Persisted version of the user's nutrition profile.
@@ -19,13 +20,15 @@ data class NutritionProfileEntity(
     val weightKg: Double,
     val activityLevel: ActivityLevel,
     val goal: NutritionGoal,
+    @ColumnInfo(defaultValue = "'GENERAL_HEALTH'") val trainingGoal: TrainingGoal,
 
     // Optional user-defined targets.
     val caloriesOverrideKcal: Double? = null,
     val proteinOverrideG: Double? = null,
     val carbohydrateOverrideG: Double? = null,
     val fatOverrideG: Double? = null,
-    val fiberOverrideG: Double? = null
+    val fiberOverrideG: Double? = null,
+    val hydrationOverrideMl: Double? = null
 ) {
     fun toDomain(): NutritionProfile = NutritionProfile(
         ageYears = ageYears,
@@ -39,8 +42,10 @@ data class NutritionProfileEntity(
             proteinG = proteinOverrideG,
             carbohydrateG = carbohydrateOverrideG,
             fatG = fatOverrideG,
-            fiberG = fiberOverrideG
-        )
+            fiberG = fiberOverrideG,
+            hydrationMl = hydrationOverrideMl
+        ),
+        trainingGoal = trainingGoal
     )
 
     companion object {
@@ -55,11 +60,13 @@ data class NutritionProfileEntity(
                 weightKg = profile.weightKg,
                 activityLevel = profile.activityLevel,
                 goal = profile.goal,
+                trainingGoal = profile.trainingGoal,
                 caloriesOverrideKcal = profile.overrides.caloriesKcal,
                 proteinOverrideG = profile.overrides.proteinG,
                 carbohydrateOverrideG = profile.overrides.carbohydrateG,
                 fatOverrideG = profile.overrides.fatG,
-                fiberOverrideG = profile.overrides.fiberG
+                fiberOverrideG = profile.overrides.fiberG,
+                hydrationOverrideMl = profile.overrides.hydrationMl
             )
     }
 }

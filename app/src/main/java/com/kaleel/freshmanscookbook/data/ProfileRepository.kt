@@ -8,7 +8,8 @@ import kotlinx.coroutines.flow.map
  */
 data class ProfileNutritionState(
     val profile: NutritionProfile,
-    val targets: DailyNutritionTargets
+    val targets: DailyNutritionTargets,
+    val hydrationTarget: HydrationTarget
 )
 
 class ProfileRepository(
@@ -30,7 +31,8 @@ class ProfileRepository(
             current?.let {
                 ProfileNutritionState(
                     profile = it,
-                    targets = NutritionTargets.calculate(it)
+                    targets = NutritionTargets.calculate(it),
+                    hydrationTarget = NutritionTargets.hydrationTarget(it)
                 )
             }
         }
@@ -42,7 +44,8 @@ class ProfileRepository(
         getProfile()?.let {
             ProfileNutritionState(
                 profile = it,
-                targets = NutritionTargets.calculate(it)
+                targets = NutritionTargets.calculate(it),
+                hydrationTarget = NutritionTargets.hydrationTarget(it)
             )
         }
 

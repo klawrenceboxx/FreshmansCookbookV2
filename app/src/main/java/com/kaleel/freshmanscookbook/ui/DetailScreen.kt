@@ -230,7 +230,7 @@ private fun MealIngredientRow(
             if (onRemove != null) IconButton(onClick = onRemove) { Icon(Icons.Rounded.Close, "Remove quick-added ingredient", tint = Muted) }
         }
         if (editing) Row(Modifier.padding(start = 48.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(quantity, { quantity = it }, label = { Text("Amount") }, singleLine = true, modifier = Modifier.weight(1f))
+            QuantityAmountField(quantity, { quantity = it }, Modifier.weight(1f))
             FoodUnitMenu(unit, { unit = it }, Modifier.weight(1f))
             FilledIconButton(onClick = { onAmountChange(quantity, unit); editing = false }) { Icon(Icons.Rounded.Check, "Apply") }
         }
@@ -263,7 +263,7 @@ private fun QuickAddDialog(viewModel: CookbookViewModel, onDismiss: () -> Unit) 
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(quantity, { quantity = it }, label = { Text("Amount") }, singleLine = true, modifier = Modifier.weight(1f))
+                    QuantityAmountField(quantity, { quantity = it }, Modifier.weight(1f))
                     FoodUnitMenu(unit, { unit = it }, Modifier.weight(1f))
                 }
                 Text(
