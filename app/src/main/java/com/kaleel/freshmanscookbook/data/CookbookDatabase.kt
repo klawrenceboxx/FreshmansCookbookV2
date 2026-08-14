@@ -53,6 +53,9 @@ interface FoodDao {
     @Query("SELECT * FROM foods ORDER BY name")
     suspend fun getAllFoods(): List<FoodEntity>
 
+    @Query("SELECT * FROM foods WHERE foodId IN (:foodIds)")
+    suspend fun getByIds(foodIds: List<String>): List<FoodEntity>
+
     @Query(
         """
         SELECT DISTINCT foods.* FROM foods
@@ -92,10 +95,21 @@ data class RecipeWithItems(
 class Converters {
     @TypeConverter fun categoryToString(value: RecipeCategory) = value.name
     @TypeConverter fun stringToCategory(value: String) = RecipeCategory.valueOf(value)
+
     @TypeConverter fun unitToString(value: IngredientUnit) = value.name
     @TypeConverter fun stringToUnit(value: String) = IngredientUnit.valueOf(value)
+
     @TypeConverter fun foodCategoryToString(value: FoodCategory) = value.name
     @TypeConverter fun stringToFoodCategory(value: String) = FoodCategory.valueOf(value)
+
+    @TypeConverter fun biologicalSexToString(value: BiologicalSex) = value.name
+    @TypeConverter fun stringToBiologicalSex(value: String) = BiologicalSex.valueOf(value)
+
+    @TypeConverter fun activityLevelToString(value: ActivityLevel) = value.name
+    @TypeConverter fun stringToActivityLevel(value: String) = ActivityLevel.valueOf(value)
+
+    @TypeConverter fun nutritionGoalToString(value: NutritionGoal) = value.name
+    @TypeConverter fun stringToNutritionGoal(value: String) = NutritionGoal.valueOf(value)
 }
 
 @Database(
@@ -105,24 +119,40 @@ class Converters {
         StepEntity::class,
         FoodEntity::class,
         FoodAliasEntity::class,
-        FoodPortionEntity::class
+        FoodPortionEntity::class,
+        NutritionProfileEntity::class,
+        MealLogEntity::class,
+        MealLogIngredientEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class CookbookDatabase : RoomDatabase() {
     abstract fun recipeDao(): RecipeDao
     abstract fun foodDao(): FoodDao
+    abstract fun profileDao(): ProfileDao
+    abstract fun mealLogDao(): MealLogDao
 
     companion object {
-        @Volatile private var instance: CookbookDatabase? = null
-        fun get(context: Context): CookbookDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(context, CookbookDatabase::class.java, "cookbook.db")
-                .addMigrations(MIGRATION_1_2)
-                .build()
-                .also { instance = it }
-        }
+        @Volatile
+        private var instance: CookbookDatabase? = null
+
+        fun get(context: Context): CookbookDatabase =
+            instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    CookbookDatabase::class.java,
+                    "cookbook.db"
+                )
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4
+                    )
+                    .build()
+                    .also { instance = it }
+            }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -144,18 +174,139 @@ abstract class CookbookDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_foods_name` ON `foods` (`name`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_foods_searchName` ON `foods` (`searchName`)")
+
                 db.execSQL(
                     """CREATE TABLE IF NOT EXISTS `food_aliases` (
-                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `alias` TEXT NOT NULL, `foodId` TEXT NOT NULL)"""
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `alias` TEXT NOT NULL,
+                        `foodId` TEXT NOT NULL)"""
                 )
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_food_aliases_alias` ON `food_aliases` (`alias`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_aliases_foodId` ON `food_aliases` (`foodId`)")
+
                 db.execSQL(
                     """CREATE TABLE IF NOT EXISTS `food_portions` (
-                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `foodId` TEXT NOT NULL,
-                        `unit` TEXT NOT NULL, `description` TEXT, `gramsPerUnit` REAL NOT NULL)"""
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `foodId` TEXT NOT NULL,
+                        `unit` TEXT NOT NULL,
+                        `description` TEXT,
+                        `gramsPerUnit` REAL NOT NULL)"""
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_portions_foodId` ON `food_portions` (`foodId`)")
+            }
+        }
+
+        /**
+         * Adds the single persisted nutrition profile.
+         *
+         * Kept as its own migration because some local installs may already
+         * have run the previously-prepared v2 -> v3 profile migration.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `nutrition_profile` (
+                        `id` INTEGER NOT NULL,
+                        `ageYears` INTEGER NOT NULL,
+                        `sex` TEXT NOT NULL,
+                        `heightCm` REAL NOT NULL,
+                        `weightKg` REAL NOT NULL,
+                        `activityLevel` TEXT NOT NULL,
+                        `goal` TEXT NOT NULL,
+                        `caloriesOverrideKcal` REAL,
+                        `proteinOverrideG` REAL,
+                        `carbohydrateOverrideG` REAL,
+                        `fatOverrideG` REAL,
+                        `fiberOverrideG` REAL,
+                        PRIMARY KEY(`id`)
+                    )"""
+                )
+            }
+        }
+
+        /**
+         * Adds immutable historical meal snapshots.
+         *
+         * meal_logs intentionally has no foreign key to recipes. Deleting or
+         * editing a recipe must never erase or rewrite nutrition history.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `meal_logs` (
+                        `id` TEXT NOT NULL,
+                        `recipeId` TEXT,
+                        `recipeName` TEXT NOT NULL,
+                        `recipeServings` INTEGER NOT NULL,
+                        `servingsConsumed` REAL NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        `loggedAt` INTEGER NOT NULL,
+
+                        `caloriesKcal` REAL NOT NULL,
+                        `proteinG` REAL NOT NULL,
+                        `carbohydrateG` REAL NOT NULL,
+                        `fatG` REAL NOT NULL,
+                        `fiberG` REAL NOT NULL,
+                        `totalSugarsG` REAL NOT NULL,
+
+                        `calciumMg` REAL NOT NULL,
+                        `ironMg` REAL NOT NULL,
+                        `magnesiumMg` REAL NOT NULL,
+                        `phosphorusMg` REAL NOT NULL,
+                        `potassiumMg` REAL NOT NULL,
+                        `sodiumMg` REAL NOT NULL,
+                        `zincMg` REAL NOT NULL,
+                        `copperMg` REAL NOT NULL,
+                        `manganeseMg` REAL NOT NULL,
+                        `seleniumMcg` REAL NOT NULL,
+
+                        `vitaminAMcgRae` REAL NOT NULL,
+                        `vitaminCMg` REAL NOT NULL,
+                        `vitaminDMcg` REAL NOT NULL,
+                        `vitaminEMg` REAL NOT NULL,
+                        `vitaminKMcg` REAL NOT NULL,
+                        `thiaminB1Mg` REAL NOT NULL,
+                        `riboflavinB2Mg` REAL NOT NULL,
+                        `niacinB3Mg` REAL NOT NULL,
+                        `pantothenicAcidB5Mg` REAL NOT NULL,
+                        `vitaminB6Mg` REAL NOT NULL,
+                        `folateMcg` REAL NOT NULL,
+                        `folateMcgDfe` REAL NOT NULL,
+                        `vitaminB12Mcg` REAL NOT NULL,
+                        `cholineMg` REAL NOT NULL,
+
+                        `saturatedFatG` REAL NOT NULL,
+                        `monounsaturatedFatG` REAL NOT NULL,
+                        `polyunsaturatedFatG` REAL NOT NULL,
+                        `cholesterolMg` REAL NOT NULL,
+
+                        PRIMARY KEY(`id`)
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_logs_loggedAt` ON `meal_logs` (`loggedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_logs_recipeId` ON `meal_logs` (`recipeId`)")
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `meal_log_ingredients` (
+                        `id` TEXT NOT NULL,
+                        `mealLogId` TEXT NOT NULL,
+                        `sourceIngredientId` TEXT,
+                        `foodId` TEXT,
+                        `name` TEXT NOT NULL,
+                        `quantity` REAL,
+                        `unit` TEXT NOT NULL,
+                        `gramsEquivalent` REAL,
+                        `wasChecked` INTEGER NOT NULL,
+                        `sortOrder` INTEGER NOT NULL,
+
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`mealLogId`) REFERENCES `meal_logs`(`id`)
+                            ON UPDATE NO ACTION ON DELETE CASCADE
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_mealLogId` ON `meal_log_ingredients` (`mealLogId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_foodId` ON `meal_log_ingredients` (`foodId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_sourceIngredientId` ON `meal_log_ingredients` (`sourceIngredientId`)")
             }
         }
     }
@@ -163,28 +314,51 @@ abstract class CookbookDatabase : RoomDatabase() {
 
 class RecipeRepository(private val db: CookbookDatabase) {
     private val dao = db.recipeDao()
-    val recipes: Flow<List<Recipe>> = dao.observeAll().map { list -> list.map { it.toModel() } }
 
-    suspend fun get(id: String) = dao.getById(id)?.toModel()
+    val recipes: Flow<List<Recipe>> =
+        dao.observeAll().map { list -> list.map { it.toModel() } }
+
+    suspend fun get(id: String) =
+        dao.getById(id)?.toModel()
 
     suspend fun save(recipe: Recipe) = db.withTransaction {
-        dao.insertRecipe(RecipeEntity(recipe.id, recipe.name, recipe.category, recipe.servings, recipe.imagePath, recipe.createdAt, recipe.updatedAt))
+        dao.insertRecipe(
+            RecipeEntity(
+                recipe.id,
+                recipe.name,
+                recipe.category,
+                recipe.servings,
+                recipe.imagePath,
+                recipe.createdAt,
+                recipe.updatedAt
+            )
+        )
+
         dao.deleteIngredients(recipe.id)
         dao.deleteSteps(recipe.id)
-        dao.insertIngredients(recipe.ingredients.mapIndexed { index, item ->
-            IngredientEntity(
-                item.id,
-                recipe.id,
-                item.name,
-                item.quantity,
-                item.unit,
-                index,
-                item.foodId,
-                item.gramsEquivalent
-            )
-        })
-        dao.insertSteps(recipe.steps.mapIndexed { index, item -> StepEntity(item.id, recipe.id, item.text, index) })
+
+        dao.insertIngredients(
+            recipe.ingredients.mapIndexed { index, item ->
+                IngredientEntity(
+                    item.id,
+                    recipe.id,
+                    item.name,
+                    item.quantity,
+                    item.unit,
+                    index,
+                    item.foodId,
+                    item.gramsEquivalent
+                )
+            }
+        )
+
+        dao.insertSteps(
+            recipe.steps.mapIndexed { index, item ->
+                StepEntity(item.id, recipe.id, item.text, index)
+            }
+        )
     }
 
-    suspend fun delete(id: String) = dao.deleteRecipe(id)
+    suspend fun delete(id: String) =
+        dao.deleteRecipe(id)
 }
