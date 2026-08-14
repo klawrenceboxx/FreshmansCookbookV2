@@ -38,6 +38,7 @@ fun DetailScreen(
     val recipe = recipes.firstOrNull { it.id == recipeId }
     val meal by viewModel.meal.collectAsState()
     val nutrition by viewModel.recipeNutrition.collectAsState()
+    val unresolvedNutritionIds by viewModel.unresolvedNutritionIngredientIds.collectAsState()
     val pinned by viewModel.pinnedNutrient.collectAsState()
     val contributions by viewModel.pinnedContributions.collectAsState()
     val logState by viewModel.mealLogState.collectAsState()
@@ -91,6 +92,7 @@ fun DetailScreen(
                     whole = nutrition,
                     servings = recipe.servings,
                     expanded = nutritionExpanded,
+                    isComplete = unresolvedNutritionIds.isEmpty(),
                     onToggle = { nutritionExpanded = !nutritionExpanded }
                 )
 
@@ -162,11 +164,12 @@ fun DetailScreen(
                         OutlinedButton(onClick = onForecast, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Rounded.AutoGraph, null); Spacer(Modifier.width(8.dp)); Text("If I eat this") }
                         Button(
                             onClick = viewModel::logCurrentMeal,
-                            enabled = currentMeal.checkedIngredientIds.isNotEmpty() && logState != MealLogState.SAVING && logState != MealLogState.SAVED,
+                            enabled = currentMeal.checkedIngredientIds.isNotEmpty() && currentMeal.checkedIngredientIds.none(unresolvedNutritionIds::contains) && logState != MealLogState.SAVING && logState != MealLogState.SAVED,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (logState == MealLogState.SAVED) "Meal logged" else if (logState == MealLogState.SAVING) "Logging…" else "Log Meal") }
                         when {
                             currentMeal.checkedIngredientIds.isEmpty() -> Text("Check at least one ingredient before logging.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                            currentMeal.checkedIngredientIds.any(unresolvedNutritionIds::contains) -> Text("A checked ingredient has no authoritative gram conversion and can’t be logged yet.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             logState == MealLogState.SAVED -> Text("Added to today’s nutrition.", color = Herb, style = MaterialTheme.typography.bodySmall)
                             logState == MealLogState.ERROR -> Text("Couldn’t log this meal. Please try again.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
@@ -195,7 +198,7 @@ private fun MealIngredientRow(
             Checkbox(ingredient.isChecked, onCheckedChange = { onToggle() })
             Column(Modifier.weight(1f).clickable { onToggle() }) {
                 Text(naturalIngredient(ingredient), style = MaterialTheme.typography.bodyLarge)
-                if (ingredient.foodId != null && ingredient.gramsEquivalent == null) Text("No supported gram conversion", color = Muted, style = MaterialTheme.typography.labelSmall)
+                if (ingredient.quantity != null && ingredient.quantity > 0 && ingredient.unit != IngredientUnit.NONE && ingredient.gramsEquivalent == null) Text("No supported gram conversion", color = Muted, style = MaterialTheme.typography.labelSmall)
                 if (pinned != null && contribution != null) Text("+${formatNutrition(contribution)} ${pinned.unit.symbol} ${pinned.displayName.lowercase()}", color = Herb, style = MaterialTheme.typography.labelMedium)
             }
             IconButton(onClick = { editing = !editing }) { Icon(Icons.Rounded.Tune, "Edit amount", tint = Muted) }

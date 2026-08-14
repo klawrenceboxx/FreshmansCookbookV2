@@ -23,14 +23,18 @@ private val primaryNutrients = listOf(
 )
 
 @Composable
-fun NutritionNote(whole: NutritionTotals, servings: Int, expanded: Boolean, onToggle: () -> Unit) {
+fun NutritionNote(whole: NutritionTotals, servings: Int, expanded: Boolean, isComplete: Boolean = true, onToggle: () -> Unit) {
     val perServing = NutritionCalculator.perServing(whole, servings)
     Surface(color = MintWash, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(17.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Nutrition note", style = MaterialTheme.typography.titleLarge)
-                    Text("Per serving · whole recipe in smaller type", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (isComplete) "Per serving · whole recipe in smaller type" else "Known subtotal · one or more amounts unresolved",
+                        color = if (isComplete) Muted else MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 IconButton(onClick = onToggle) { Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, if (expanded) "Show less" else "Show all nutrients") }
             }
@@ -43,7 +47,7 @@ fun NutritionNote(whole: NutritionTotals, servings: Int, expanded: Boolean, onTo
                     }
                 }
             }
-            Text("Whole recipe: ${formatNutrition(whole.caloriesKcal)} kcal", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 10.dp))
+            Text("${if (isComplete) "Whole recipe" else "Known subtotal"}: ${formatNutrition(whole.caloriesKcal)} kcal", color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 10.dp))
             if (expanded) {
                 HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Line)
                 NutrientCatalog.all.filter { it.key !in primaryNutrients }.forEach { meta ->

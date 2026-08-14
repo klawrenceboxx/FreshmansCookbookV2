@@ -1,0 +1,11 @@
+{
+  "description": "Reviewed conservative mappings from Foundation food FDC IDs to authoritative USDA donor records. Values are copied only from the donor JSON at generation time.",
+  "matches": {
+    "2346394": { "donorFdcId": "170187", "portionIncludes": ["halves"] },
+    "2515378": { "donorFdcId": "170178" },
+    "2262075": { "donorFdcId": "169414", "portionIncludes": ["ground"] },
+    "2710819": { "donorFdcId": "2707590", "portionIncludes": ["1 cup"] },
+    "2346411": { "donorFdcId": "171711" },
+    "2727588": { "donorFdcId": "167787" }
+  }
+}

@@ -50,6 +50,12 @@ interface FoodDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertPortions(portions: List<FoodPortionEntity>)
 
+    @Query("DELETE FROM food_aliases")
+    suspend fun deleteAllAliases()
+
+    @Query("DELETE FROM food_portions")
+    suspend fun deleteAllPortions()
+
     @Query("SELECT * FROM foods ORDER BY name")
     suspend fun getAllFoods(): List<FoodEntity>
 

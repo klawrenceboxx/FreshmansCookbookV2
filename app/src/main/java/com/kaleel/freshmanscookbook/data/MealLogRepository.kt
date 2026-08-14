@@ -40,6 +40,11 @@ class MealLogRepository(
         meal: MealInstance,
         loggedAt: Long = System.currentTimeMillis()
     ): MealLogRecord {
+        require(meal.ingredients.none {
+            it.isChecked && it.quantity != null && it.quantity > 0 && it.unit != IngredientUnit.NONE && it.gramsEquivalent == null
+        }) {
+            "Checked measured ingredients must have an authoritative gram conversion before logging"
+        }
         val foodsById = resolveFoods(meal)
         val consumedNutrition =
             MealNutritionCalculator.consumedTotals(meal, foodsById)

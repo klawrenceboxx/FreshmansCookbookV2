@@ -180,3 +180,9 @@ data class MealIngredient(
         )
     }
 }
+
+/** Linked ingredients omitted from totals because no authoritative weight exists. */
+fun MealInstance.unresolvedNutritionIngredientIds(): Set<String> = ingredients
+    .asSequence()
+    .filter { it.quantity != null && it.quantity > 0 && it.unit != IngredientUnit.NONE && it.gramsEquivalent == null }
+    .mapTo(linkedSetOf()) { it.id }

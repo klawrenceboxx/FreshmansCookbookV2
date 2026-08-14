@@ -13,13 +13,21 @@ const path = require("node:path");
 const { StringDecoder } = require("node:string_decoder");
 
 const inputPath = process.argv[2] && path.resolve(process.argv[2]);
+const enrichmentPaths = process.argv.slice(3).map((value) => path.resolve(value));
 const outputPath = path.resolve(__dirname, "../app/src/main/assets/foods.json");
+const matchPath = path.resolve(__dirname, "usda-enrichment-matches.json");
 
-if (!inputPath) {
-  console.error('Usage: node scripts/convert-usda-foundation.js "C:\\path\\to\\foundation-foods.json"');
+if (require.main === module && !inputPath) {
+  console.error('Usage: node scripts/convert-usda-foundation.js "C:\\path\\to\\foundation-foods.json" ["C:\\path\\to\\sr-legacy.json" ...]');
   process.exit(1);
 }
-if (!fs.existsSync(inputPath) || !fs.statSync(inputPath).isFile()) {
+for (const enrichmentPath of require.main === module ? enrichmentPaths : []) {
+  if (!fs.existsSync(enrichmentPath) || !fs.statSync(enrichmentPath).isFile()) {
+    console.error(`Enrichment input file does not exist: ${enrichmentPath}`);
+    process.exit(1);
+  }
+}
+if (require.main === module && (!fs.existsSync(inputPath) || !fs.statSync(inputPath).isFile())) {
   console.error(`Input file does not exist: ${inputPath}`);
   process.exit(1);
 }
@@ -87,6 +95,7 @@ const NUTRIENT_FIELDS = [
   "vitaminB12Mcg", "cholineMg", "saturatedFatG", "monounsaturatedFatG",
   "polyunsaturatedFatG", "cholesterolMg",
 ];
+const CORE_NUTRIENT_FIELDS = ["caloriesKcal", "proteinG", "carbohydrateG", "fatG", "fiberG"];
 
 const CATEGORY_MAP = new Map([
   ["Beef Products", "MEAT"],
@@ -125,6 +134,13 @@ const report = {
   malformed: 0,
   invalidNutrientValues: 0,
   invalidPortions: 0,
+  foodsWithPortionsBefore: 0,
+  foodsWithPortionsAfter: 0,
+  portionEnrichedFoods: 0,
+  coreValuesEnriched: 0,
+  coreMissingAfter: Object.fromEntries(CORE_NUTRIENT_FIELDS.map((field) => [field, 0])),
+  exactMatches: 0,
+  reviewedMatches: 0,
 };
 const malformedExamples = [];
 
@@ -164,7 +180,30 @@ function singularize(value) {
   return value.endsWith("s") && !value.endsWith("ss") ? value.slice(0, -1) : value;
 }
 
-function convertPortions(foodId, sourcePortions) {
+function portionText(portion) {
+  return String(portion.portionDescription || portion.modifier || "").trim().toLowerCase();
+}
+
+function parsedPortionUnit(portion) {
+  const sourceUnit = String(portion.measureUnit?.name || portion.measureUnit?.abbreviation || "").toLowerCase().trim();
+  const text = portionText(portion);
+  if (sourceUnit === "cup" || /(^|\s|\d)cup(?:\s|,|$)/.test(text)) return "CUP";
+  if (sourceUnit === "tablespoon" || /(^|\s|\d)(?:tbsp|tablespoon)(?:\s|,|$)/.test(text)) return "TBSP";
+  if (sourceUnit === "teaspoon" || /(^|\s|\d)(?:tsp|teaspoon)(?:\s|,|$)/.test(text)) return "TSP";
+  if (sourceUnit === "milliliter" || /(^|\s|\d)ml(?:\s|,|$)/.test(text)) return "ML";
+  if (sourceUnit === "oz" || sourceUnit === "ounce" || /(^|\s|\d)oz(?:\s|,|$)/.test(text)) return "OZ";
+  if (COUNTABLE_UNITS.has(sourceUnit) || /\b(each|piece|slice|fruit|berry|berries|nut|nuts)\b/.test(text)) return "PIECE";
+  return null;
+}
+
+function portionAmount(portion) {
+  const direct = finiteNonNegative(portion.amount ?? portion.value);
+  if (direct && direct > 0) return direct;
+  const match = portionText(portion).match(/^\s*(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : 1;
+}
+
+function convertPortions(foodId, sourcePortions, options = {}) {
   const result = [];
   const seen = new Set();
   if (!Array.isArray(sourcePortions)) return result;
@@ -172,30 +211,32 @@ function convertPortions(foodId, sourcePortions) {
   for (const portion of sourcePortions) {
     if (!portion || typeof portion !== "object") continue;
     const sourceUnit = String(portion.measureUnit?.name || portion.measureUnit?.abbreviation || "").toLowerCase().trim();
-    const amount = finiteNonNegative(portion.amount ?? portion.value ?? 1);
+    const sourceDescription = portionText(portion);
+    if (options.portionIncludes?.length && !options.portionIncludes.some((value) => sourceDescription.includes(value))) continue;
+    const amount = portionAmount(portion);
     const gramWeight = finiteNonNegative(portion.gramWeight);
     if (!amount || !gramWeight) {
       report.invalidPortions++;
       continue;
     }
 
-    let unit;
-    if (sourceUnit === "cup") unit = "CUP";
-    else if (sourceUnit === "tablespoon") unit = "TBSP";
-    else if (sourceUnit === "teaspoon") unit = "TSP";
-    else if (sourceUnit === "milliliter") unit = "ML";
-    else if (sourceUnit === "oz" || sourceUnit === "ounce") unit = "OZ";
-    else if (COUNTABLE_UNITS.has(sourceUnit)) unit = "PIECE";
-    else continue; // RACC/serving/package/etc. are not app ingredient units.
+    const unit = parsedPortionUnit(portion);
+    if (!unit) continue; // RACC/serving/package/etc. are not app ingredient units.
 
     const gramsPerUnit = gramWeight / amount;
     if (!Number.isFinite(gramsPerUnit) || gramsPerUnit <= 0) continue;
 
-    const modifier = String(portion.modifier || "").trim().toLowerCase();
-    const unitLabel = unit === "PIECE" && sourceUnit === "each"
-      ? (modifier || "piece")
-      : [modifier, singularize(sourceUnit)].filter(Boolean).join(" ");
-    const description = `1 ${unitLabel}`.replace(/\s+/g, " ").trim();
+    const modifier = String(portion.portionDescription || portion.modifier || "").trim().toLowerCase()
+      .replace(/^\s*\d+(?:\.\d+)?\s*/, "")
+      .replace(/^(cup|tbsp|tablespoon|tsp|teaspoon|oz)\b\s*,?\s*/, "");
+    const canonicalLabel = unit === "CUP" ? "cup"
+      : unit === "TBSP" ? "tablespoon"
+      : unit === "TSP" ? "teaspoon"
+      : unit === "ML" ? "milliliter"
+      : unit === "OZ" ? (sourceDescription.includes("fl oz") ? "fl oz" : "oz")
+      : sourceUnit === "each" ? "piece"
+      : singularize(sourceUnit === "undetermined" ? "piece" : sourceUnit);
+    const description = `1 ${canonicalLabel}${modifier ? `, ${modifier}` : ""}`.replace(/\s+/g, " ").trim();
     const roundedGrams = Number(gramsPerUnit.toFixed(4));
     const dedupeKey = `${unit}|${normalizeSearchName(description)}|${roundedGrams.toFixed(3)}`;
     if (seen.has(dedupeKey)) {
@@ -205,10 +246,58 @@ function convertPortions(foodId, sourcePortions) {
     seen.add(dedupeKey);
     result.push({ foodId, unit, description, gramsPerUnit: roundedGrams });
   }
+  return options.deriveVolumeUnits === false ? result : deriveVolumePortions(foodId, result);
+}
+
+function deriveVolumePortions(foodId, portions) {
+  const ratios = { CUP: 1, TBSP: 16, TSP: 48 };
+  const result = portions.slice();
+  const seen = new Set(result.map((portion) => `${portion.unit}|${normalizeSearchName(portion.description)}|${portion.gramsPerUnit.toFixed(3)}`));
+  const groups = new Map();
+  for (const portion of portions.filter((item) => item.unit in ratios)) {
+    const suffix = portion.description.replace(/^1\s+(?:cup|tablespoon|teaspoon)/, "");
+    const group = groups.get(suffix) || [];
+    group.push(portion);
+    groups.set(suffix, group);
+  }
+  for (const [suffix, sources] of groups) {
+    for (const [unit, divisor] of Object.entries(ratios)) {
+      if (sources.some((source) => source.unit === unit)) continue;
+      const estimates = sources.map((source) => source.gramsPerUnit * ratios[source.unit] / divisor);
+      if (Math.max(...estimates) / Math.min(...estimates) > 1.01) continue;
+      const gramsPerUnit = Number((estimates.reduce((sum, value) => sum + value, 0) / estimates.length).toFixed(4));
+      const label = unit === "CUP" ? "cup" : unit === "TBSP" ? "tablespoon" : "teaspoon";
+      const description = `1 ${label}${suffix}`.replace(/\s+/g, " ").trim();
+      const key = `${unit}|${normalizeSearchName(description)}|${gramsPerUnit.toFixed(3)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({ foodId, unit, description, gramsPerUnit });
+    }
+  }
   return result;
 }
 
+function nutrientsFor(food) {
+  const values = new Map();
+  if (Array.isArray(food.foodNutrients)) {
+    for (const record of food.foodNutrients) {
+      const id = Number(record?.nutrient?.id);
+      const amount = finiteNonNegative(record?.amount);
+      if (Number.isSafeInteger(id) && amount !== null && !values.has(id)) values.set(id, amount);
+    }
+  }
+  const nutrients = Object.fromEntries(NUTRIENT_FIELDS.map((field) => [field, null]));
+  for (const [id, field] of DIRECT_NUTRIENTS) if (values.has(id)) nutrients[field] = values.get(id);
+  nutrients.caloriesKcal = pick(values, 1008, 2048, 2047);
+  if (nutrients.caloriesKcal === null && values.has(1062)) nutrients.caloriesKcal = Number((values.get(1062) / 4.184).toFixed(4));
+  nutrients.carbohydrateG = pick(values, 1005, 1050);
+  if (nutrients.fiberG === null) nutrients.fiberG = pick(values, 2033);
+  if (nutrients.vitaminDMcg === null && values.has(1110)) nutrients.vitaminDMcg = Number((values.get(1110) * 0.025).toFixed(4));
+  return nutrients;
+}
+
 function convertFood(food) {
+  if (food === null) return { skip: "null entry" };
   if (!food || typeof food !== "object") return { error: "entry is not an object" };
   if (food.foodClass && food.foodClass !== "FinalFood") return { skip: "not a FinalFood" };
 
@@ -232,15 +321,7 @@ function convertFood(food) {
     }
   }
 
-  const nutrients = Object.fromEntries(NUTRIENT_FIELDS.map((field) => [field, null]));
-  for (const [id, field] of DIRECT_NUTRIENTS) {
-    if (values.has(id)) nutrients[field] = values.get(id);
-  }
-  nutrients.caloriesKcal = pick(values, 1008, 2048, 2047);
-  if (nutrients.caloriesKcal === null && values.has(1062)) nutrients.caloriesKcal = Number((values.get(1062) / 4.184).toFixed(4));
-  nutrients.carbohydrateG = pick(values, 1005, 1050);
-  if (nutrients.fiberG === null) nutrients.fiberG = pick(values, 2033);
-  if (nutrients.vitaminDMcg === null && values.has(1110)) nutrients.vitaminDMcg = Number((values.get(1110) * 0.025).toFixed(4));
+  const nutrients = nutrientsFor(food);
 
   const nutrientCount = Object.values(nutrients).filter((value) => value !== null).length;
   // A FinalFood with no supported nutrient is not useful to nutrition search.
@@ -264,8 +345,8 @@ function convertFood(food) {
   };
 }
 
-/** Stream only values inside the root FoundationFoods JSON array. */
-async function* streamFoundationFoods(filePath) {
+/** Stream values inside a named root JSON array without retaining the dataset. */
+async function* streamFoods(filePath, rootKeys) {
   const stream = fs.createReadStream(filePath, { highWaterMark: 256 * 1024 });
   const decoder = new StringDecoder("utf8");
   let locatedArray = false;
@@ -281,7 +362,9 @@ async function* streamFoundationFoods(filePath) {
     let text = decoder.write(chunk);
     if (!locatedArray) {
       prefix += text;
-      const keyIndex = prefix.indexOf('"FoundationFoods"');
+      const matches = rootKeys.map((key) => ({ key, index: prefix.indexOf(`"${key}"`) })).filter((match) => match.index >= 0);
+      const match = matches.sort((a, b) => a.index - b.index)[0];
+      const keyIndex = match?.index ?? -1;
       if (keyIndex < 0) {
         prefix = prefix.slice(-64);
         continue;
@@ -331,8 +414,77 @@ async function* streamFoundationFoods(filePath) {
       }
     }
   }
-  if (!locatedArray) throw new Error('Could not find root "FoundationFoods" array');
+  if (!locatedArray) throw new Error(`Could not find a supported root array (${rootKeys.join(", ")})`);
   if (collecting && buffer.trim()) yield buffer.trim();
+}
+
+async function buildEnrichmentIndex(paths) {
+  const byId = new Map();
+  const byExactName = new Map();
+  for (const filePath of paths) {
+    for await (const rawEntry of streamFoods(filePath, ["SRLegacyFoods", "SurveyFoods"])) {
+      let food;
+      try { food = JSON.parse(rawEntry); } catch { continue; }
+      const fdcId = String(food.fdcId || "");
+      const name = cleanDisplayName(String(food.description || ""));
+      if (!fdcId || !name) continue;
+      const donor = {
+        fdcId,
+        name,
+        dataType: String(food.dataType || "USDA FoodData Central"),
+        nutrients: nutrientsFor(food),
+        sourcePortions: food.foodPortions,
+      };
+      byId.set(fdcId, donor);
+      const key = normalizeSearchName(name);
+      const matches = byExactName.get(key) || [];
+      matches.push(donor);
+      byExactName.set(key, matches);
+    }
+  }
+  return { byId, byExactName };
+}
+
+function enrichFood(food, index, reviewedMatches) {
+  const reviewed = reviewedMatches[food.foodId];
+  let donor = reviewed ? index.byId.get(String(reviewed.donorFdcId)) : null;
+  let matchType = "reviewed";
+  if (!donor) {
+    const exact = index.byExactName.get(food.searchName) || [];
+    if (exact.length === 1) donor = exact[0];
+    matchType = "exact-name";
+  }
+  if (!donor) return food;
+  if (reviewed) report.reviewedMatches++; else report.exactMatches++;
+
+  const nativePortionCount = food.portions.length;
+  const donorPortions = convertPortions(food.foodId, donor.sourcePortions, {
+    portionIncludes: reviewed?.portionIncludes?.map((value) => value.toLowerCase()),
+  });
+  if (!food.portions.length && donorPortions.length) {
+    food.portions = donorPortions;
+    report.portionEnrichedFoods++;
+  }
+
+  const filledCoreFields = [];
+  for (const field of CORE_NUTRIENT_FIELDS) {
+    if (food[field] === null && donor.nutrients[field] !== null) {
+      food[field] = donor.nutrients[field];
+      filledCoreFields.push(field);
+      report.coreValuesEnriched++;
+    }
+  }
+  if ((!nativePortionCount && food.portions.length) || filledCoreFields.length) {
+    food.enrichment = {
+      matchType,
+      donorDataType: donor.dataType,
+      donorFdcId: donor.fdcId,
+      donorDescription: donor.name,
+      portions: !nativePortionCount && food.portions.length > 0,
+      coreNutrients: filledCoreFields,
+    };
+  }
+  return food;
 }
 
 function write(stream, value) {
@@ -348,14 +500,16 @@ function formatBytes(bytes) {
 }
 
 async function main() {
+  const reviewedMatches = fs.existsSync(matchPath) ? JSON.parse(fs.readFileSync(matchPath, "utf8")).matches : {};
+  const enrichmentIndex = await buildEnrichmentIndex(enrichmentPaths);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.tmp`;
   const output = fs.createWriteStream(temporaryPath, { encoding: "utf8" });
-  await write(output, '{"schemaVersion":1,"source":"USDA FoodData Central Foundation Foods","foods":[');
+  await write(output, '{"schemaVersion":2,"source":"USDA FoodData Central Foundation Foods enriched with reviewed USDA FoodData Central records","foods":[');
   let first = true;
 
   try {
-    for await (const rawEntry of streamFoundationFoods(inputPath)) {
+    for await (const rawEntry of streamFoods(inputPath, ["FoundationFoods"])) {
       report.read++;
       let sourceFood;
       try {
@@ -382,6 +536,10 @@ async function main() {
         continue;
       }
 
+      if (converted.food.portions.length) report.foodsWithPortionsBefore++;
+      enrichFood(converted.food, enrichmentIndex, reviewedMatches);
+      if (converted.food.portions.length) report.foodsWithPortionsAfter++;
+      for (const field of CORE_NUTRIENT_FIELDS) if (converted.food[field] === null) report.coreMissingAfter[field]++;
       await write(output, `${first ? "" : ","}${JSON.stringify(converted.food)}`);
       first = false;
       report.retained++;
@@ -409,13 +567,24 @@ async function main() {
   console.log(`  Nutrient values retained:    ${report.nutrients}`);
   console.log(`  Portions retained:           ${report.portions}`);
   console.log(`  Duplicate portions removed:  ${report.duplicates}`);
+  console.log(`  Foods with portions before:  ${report.foodsWithPortionsBefore}`);
+  console.log(`  Foods with portions after:   ${report.foodsWithPortionsAfter}`);
+  console.log(`  Foods still without portions:${report.retained - report.foodsWithPortionsAfter}`);
+  console.log(`  Portion-enriched foods:      ${report.portionEnrichedFoods}`);
+  console.log(`  Core values enriched:        ${report.coreValuesEnriched}`);
+  console.log(`  Core fields missing after:   ${JSON.stringify(report.coreMissingAfter)}`);
+  console.log(`  Exact/reviewed matches:      ${report.exactMatches}/${report.reviewedMatches}`);
   console.log(`  Input file size:              ${formatBytes(inputSize)} (${inputSize} bytes)`);
   console.log(`  Output file size:             ${formatBytes(outputSize)} (${outputSize} bytes)`);
   console.log(`  Output:                       ${outputPath}`);
   if (malformedExamples.length) console.log(`  Validation examples:          ${malformedExamples.join("; ")}`);
 }
 
-main().catch((error) => {
-  console.error(`Conversion failed: ${error.stack || error.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Conversion failed: ${error.stack || error.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { convertPortions, deriveVolumePortions, enrichFood, nutrientsFor, normalizeSearchName, streamFoods };

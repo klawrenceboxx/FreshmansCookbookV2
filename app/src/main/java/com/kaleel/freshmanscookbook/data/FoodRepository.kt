@@ -16,10 +16,14 @@ class FoodRepository(
 ) {
     private val dao = database.foodDao()
     private val seedMutex = Mutex()
+    @Volatile private var seededThisProcess = false
 
     suspend fun ensureSeeded() = seedMutex.withLock {
-        if (dao.countFoods() > 0) return@withLock
+        if (seededThisProcess) return@withLock
+        // Reapply the generated asset once per process. This refreshes USDA
+        // portions/core fields for existing installs without touching recipes.
         FoodAssetSeeder.seed(context, database)
+        seededThisProcess = true
     }
 
     suspend fun search(query: String, limit: Int = 8): List<FoodEntity> {
@@ -37,39 +41,69 @@ class FoodRepository(
 
     /** Resolve an entered ingredient amount to grams without guessing volume. */
     suspend fun gramsFor(foodId: String?, quantity: Double?, unit: IngredientUnit): Double? {
+        resolveGrams(quantity, unit, emptyList())?.let { return it }
         if (quantity == null || quantity < 0) return null
-        val massMultiplier = when (unit) {
-            IngredientUnit.G -> 1.0
-            IngredientUnit.KG -> 1_000.0
-            IngredientUnit.OZ -> 28.349523125
-            IngredientUnit.LB -> 453.59237
-            else -> null
-        }
-        if (massMultiplier != null) return quantity * massMultiplier
         if (foodId == null) return null
 
         val lookupUnit = if (unit == IngredientUnit.L) IngredientUnit.ML else unit
         if (lookupUnit == IngredientUnit.NONE) return null
         val portions = dao.portions(foodId, lookupUnit)
-        if (portions.isEmpty()) return null
-
-        // Prefer the unmodified household measure. If USDA only provides
-        // multiple size-specific weights (for example small/large), returning
-        // null is safer than silently choosing one.
-        val expectedDescriptions = FoodSeedData.commonUnitLabels[lookupUnit]
-            .orEmpty()
-            .map { normalizeFoodSearchName("1 $it") }
-            .toSet()
-        val exact = portions.firstOrNull {
-            normalizeFoodSearchName(it.description.orEmpty()) in expectedDescriptions
-        }
-        val gramsPerUnit = exact?.gramsPerUnit ?: portions.singleOrNull()?.gramsPerUnit
-            ?: portions.map { it.gramsPerUnit }.takeIf { values -> values.all { abs(it - values.first()) < 0.01 } }?.first()
-            ?: return null
-        val adjustedQuantity = if (unit == IngredientUnit.L) quantity * 1_000.0 else quantity
-        return adjustedQuantity * gramsPerUnit
+        return resolveGrams(quantity, unit, portions)
     }
+
+    /** Backfill saved ingredients that predate the enriched USDA asset. */
+    suspend fun resolveMissingGrams(meal: MealInstance): MealInstance =
+        resolveMissingGramEquivalents(meal) { foodId, quantity, unit ->
+            gramsFor(foodId, quantity, unit)
+        }
 }
+
+fun resolveGrams(
+    quantity: Double?,
+    unit: IngredientUnit,
+    portions: List<FoodPortionEntity>
+): Double? {
+    if (quantity == null || quantity < 0) return null
+    val massMultiplier = when (unit) {
+        IngredientUnit.G -> 1.0
+        IngredientUnit.KG -> 1_000.0
+        IngredientUnit.OZ -> 28.349523125
+        IngredientUnit.LB -> 453.59237
+        else -> null
+    }
+    if (massMultiplier != null) return quantity * massMultiplier
+    val lookupUnit = if (unit == IngredientUnit.L) IngredientUnit.ML else unit
+    if (lookupUnit == IngredientUnit.NONE) return null
+    val matching = portions.filter { it.unit == lookupUnit }
+    if (matching.isEmpty()) return null
+
+    val expectedDescriptions = FoodSeedData.commonUnitLabels[lookupUnit]
+        .orEmpty()
+        .map { normalizeFoodSearchName("1 $it") }
+        .toSet()
+    val exact = matching.firstOrNull {
+        normalizeFoodSearchName(it.description.orEmpty()) in expectedDescriptions
+    }
+    val gramsPerUnit = exact?.gramsPerUnit ?: matching.singleOrNull()?.gramsPerUnit
+        ?: matching.map { it.gramsPerUnit }
+            .takeIf { values -> values.all { abs(it - values.first()) < 0.01 } }
+            ?.first()
+        ?: return null
+    val adjustedQuantity = if (unit == IngredientUnit.L) quantity * 1_000.0 else quantity
+    return adjustedQuantity * gramsPerUnit
+}
+
+suspend fun resolveMissingGramEquivalents(
+    meal: MealInstance,
+    resolver: suspend (String?, Double?, IngredientUnit) -> Double?
+): MealInstance = meal.copy(
+    ingredients = meal.ingredients.map { ingredient ->
+        if (ingredient.gramsEquivalent != null) ingredient
+        else ingredient.copy(
+            gramsEquivalent = resolver(ingredient.foodId, ingredient.quantity, ingredient.unit)
+        )
+    }
+)
 
 fun normalizeFoodSearchName(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFKD)
     .replace(Regex("[\\u0300-\\u036f]"), "")
@@ -90,6 +124,8 @@ private object FoodAssetSeeder {
 
         database.withTransaction {
             val dao = database.foodDao()
+            dao.deleteAllAliases()
+            dao.deleteAllPortions()
             val foods = ArrayList<FoodEntity>(100)
             val aliases = ArrayList<FoodAliasEntity>(100)
             val portions = ArrayList<FoodPortionEntity>(100)

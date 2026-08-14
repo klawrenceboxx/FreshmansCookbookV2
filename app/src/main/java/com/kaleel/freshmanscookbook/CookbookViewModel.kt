@@ -78,6 +78,10 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
         currentMeal?.let { MealNutritionCalculator.plannedTotals(it, foods) } ?: NutritionTotals()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NutritionTotals())
 
+    val unresolvedNutritionIngredientIds = _meal.map { currentMeal ->
+        currentMeal?.unresolvedNutritionIngredientIds().orEmpty()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
     val forecast = combine(dailyNutrition, _meal, _mealFoods, profileNutrition) { day, currentMeal, foods, profileState ->
         currentMeal?.let { NutritionForecast.calculate(day.totals, it, foods, profileState?.targets) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -154,9 +158,11 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
 
     fun beginMeal(recipe: Recipe) {
         if (_meal.value?.recipeId == recipe.id) return
-        _meal.value = MealInstance.fromRecipe(recipe)
         _mealLogState.value = MealLogState.IDLE
-        viewModelScope.launch { refreshMealFoods() }
+        viewModelScope.launch {
+            _meal.value = foodRepository.resolveMissingGrams(MealInstance.fromRecipe(recipe))
+            refreshMealFoods()
+        }
     }
 
     fun endMeal(recipeId: String) {
@@ -210,7 +216,10 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
 
     fun logCurrentMeal() {
         val current = _meal.value ?: return
-        if (current.checkedIngredientIds.isEmpty() || current.servingsConsumed <= 0 || _mealLogState.value == MealLogState.SAVING) return
+        val hasUnresolvedChecked = current.ingredients.any {
+            it.isChecked && it.quantity != null && it.quantity > 0 && it.unit != IngredientUnit.NONE && it.gramsEquivalent == null
+        }
+        if (current.checkedIngredientIds.isEmpty() || hasUnresolvedChecked || current.servingsConsumed <= 0 || _mealLogState.value == MealLogState.SAVING) return
         viewModelScope.launch {
             _mealLogState.value = MealLogState.SAVING
             _mealLogState.value = runCatching { mealLogRepository.logMeal(current) }
