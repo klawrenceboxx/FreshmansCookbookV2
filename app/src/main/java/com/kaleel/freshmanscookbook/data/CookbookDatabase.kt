@@ -122,9 +122,10 @@ class Converters {
         FoodPortionEntity::class,
         NutritionProfileEntity::class,
         MealLogEntity::class,
-        MealLogIngredientEntity::class
+        MealLogIngredientEntity::class,
+        FoodLogEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -133,6 +134,7 @@ abstract class CookbookDatabase : RoomDatabase() {
     abstract fun foodDao(): FoodDao
     abstract fun profileDao(): ProfileDao
     abstract fun mealLogDao(): MealLogDao
+    abstract fun foodLogDao(): FoodLogDao
 
     companion object {
         @Volatile
@@ -148,7 +150,8 @@ abstract class CookbookDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2,
                         MIGRATION_2_3,
-                        MIGRATION_3_4
+                        MIGRATION_3_4,
+                        MIGRATION_4_5
                     )
                     .build()
                     .also { instance = it }
@@ -307,6 +310,76 @@ abstract class CookbookDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_mealLogId` ON `meal_log_ingredients` (`mealLogId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_foodId` ON `meal_log_ingredients` (`foodId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_meal_log_ingredients_sourceIngredientId` ON `meal_log_ingredients` (`sourceIngredientId`)")
+            }
+        }
+
+        /**
+         * Adds standalone food/snack logs.
+         *
+         * Nutrition is snapshotted directly on each row so historical totals
+         * remain stable if the USDA seed database changes later.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `food_logs` (
+                        `id` TEXT NOT NULL,
+                        `foodId` TEXT NOT NULL,
+                        `foodName` TEXT NOT NULL,
+                        `quantity` REAL,
+                        `unit` TEXT NOT NULL,
+                        `gramsEquivalent` REAL NOT NULL,
+                        `loggedAt` INTEGER NOT NULL,
+
+                        `caloriesKcal` REAL NOT NULL,
+                        `proteinG` REAL NOT NULL,
+                        `carbohydrateG` REAL NOT NULL,
+                        `fatG` REAL NOT NULL,
+                        `fiberG` REAL NOT NULL,
+                        `totalSugarsG` REAL NOT NULL,
+
+                        `calciumMg` REAL NOT NULL,
+                        `ironMg` REAL NOT NULL,
+                        `magnesiumMg` REAL NOT NULL,
+                        `phosphorusMg` REAL NOT NULL,
+                        `potassiumMg` REAL NOT NULL,
+                        `sodiumMg` REAL NOT NULL,
+                        `zincMg` REAL NOT NULL,
+                        `copperMg` REAL NOT NULL,
+                        `manganeseMg` REAL NOT NULL,
+                        `seleniumMcg` REAL NOT NULL,
+
+                        `vitaminAMcgRae` REAL NOT NULL,
+                        `vitaminCMg` REAL NOT NULL,
+                        `vitaminDMcg` REAL NOT NULL,
+                        `vitaminEMg` REAL NOT NULL,
+                        `vitaminKMcg` REAL NOT NULL,
+                        `thiaminB1Mg` REAL NOT NULL,
+                        `riboflavinB2Mg` REAL NOT NULL,
+                        `niacinB3Mg` REAL NOT NULL,
+                        `pantothenicAcidB5Mg` REAL NOT NULL,
+                        `vitaminB6Mg` REAL NOT NULL,
+                        `folateMcg` REAL NOT NULL,
+                        `folateMcgDfe` REAL NOT NULL,
+                        `vitaminB12Mcg` REAL NOT NULL,
+                        `cholineMg` REAL NOT NULL,
+
+                        `saturatedFatG` REAL NOT NULL,
+                        `monounsaturatedFatG` REAL NOT NULL,
+                        `polyunsaturatedFatG` REAL NOT NULL,
+                        `cholesterolMg` REAL NOT NULL,
+
+                        PRIMARY KEY(`id`)
+                    )"""
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_food_logs_loggedAt` " +
+                            "ON `food_logs` (`loggedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_food_logs_foodId` " +
+                            "ON `food_logs` (`foodId`)"
+                )
             }
         }
     }

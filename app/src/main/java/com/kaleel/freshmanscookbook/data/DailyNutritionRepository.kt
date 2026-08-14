@@ -1,38 +1,32 @@
 package com.kaleel.freshmanscookbook.data
 
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 
 /**
  * Aggregated nutrition for a caller-supplied time window.
  *
- * Daily UI should pass the local day's [startInclusive, endExclusive) epoch
- * boundaries. Keeping timezone/date boundary calculation outside this data
- * class avoids hiding timezone assumptions in persistence code.
+ * A daily snapshot contains both recipe-based meal logs and individually
+ * logged foods/snacks.
  */
 data class DailyNutritionSnapshot(
     val startInclusive: Long,
     val endExclusive: Long,
     val meals: List<MealLogWithIngredients>,
+    val foods: List<FoodLogEntity>,
     val totals: NutritionTotals
 ) {
-    /**
-     * Converts the aggregate into the same progress model used by future
-     * dashboard and forecast screens.
-     */
     fun progress(
         targets: DailyNutritionTargets?
     ): List<NutrientProgress> =
         NutrientCatalog.all.map { metadata ->
-            val target = targets?.get(metadata.key)?.amount
-
             NutrientProgress(
                 nutrient = metadata.key,
                 consumed = MealNutritionCalculator.nutrientValue(
                     totals,
                     metadata.key
                 ),
-                target = target
+                target = targets?.get(metadata.key)?.amount
             )
         }
 }
@@ -41,20 +35,23 @@ class DailyNutritionRepository(
     database: CookbookDatabase
 ) {
     private val mealLogDao = database.mealLogDao()
+    private val foodLogDao = database.foodLogDao()
 
     fun observeBetween(
         startInclusive: Long,
         endExclusive: Long
     ): Flow<DailyNutritionSnapshot> =
-        mealLogDao
-            .observeBetween(startInclusive, endExclusive)
-            .map { meals ->
-                snapshot(
-                    startInclusive = startInclusive,
-                    endExclusive = endExclusive,
-                    meals = meals
-                )
-            }
+        combine(
+            mealLogDao.observeBetween(startInclusive, endExclusive),
+            foodLogDao.observeBetween(startInclusive, endExclusive)
+        ) { meals, foods ->
+            snapshot(
+                startInclusive = startInclusive,
+                endExclusive = endExclusive,
+                meals = meals,
+                foods = foods
+            )
+        }
 
     suspend fun getBetween(
         startInclusive: Long,
@@ -66,22 +63,37 @@ class DailyNutritionRepository(
             meals = mealLogDao.getBetween(
                 startInclusive,
                 endExclusive
+            ),
+            foods = foodLogDao.getBetween(
+                startInclusive,
+                endExclusive
             )
         )
 
     private fun snapshot(
         startInclusive: Long,
         endExclusive: Long,
-        meals: List<MealLogWithIngredients>
-    ): DailyNutritionSnapshot =
-        DailyNutritionSnapshot(
+        meals: List<MealLogWithIngredients>,
+        foods: List<FoodLogEntity>
+    ): DailyNutritionSnapshot {
+        var totals = NutritionTotals()
+
+        meals.forEach { record ->
+            totals = add(totals, record.meal.nutritionTotals())
+        }
+
+        foods.forEach { food ->
+            totals = add(totals, food.nutrition)
+        }
+
+        return DailyNutritionSnapshot(
             startInclusive = startInclusive,
             endExclusive = endExclusive,
             meals = meals,
-            totals = meals.fold(NutritionTotals()) { running, record ->
-                add(running, record.meal.nutritionTotals())
-            }
+            foods = foods,
+            totals = totals
         )
+    }
 
     private fun add(
         first: NutritionTotals,
