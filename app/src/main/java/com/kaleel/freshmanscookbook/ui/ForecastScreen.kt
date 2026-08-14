@@ -57,18 +57,16 @@ fun ForecastScreen(viewModel: CookbookViewModel, onBack: () -> Unit) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                     ordered.forEach { key ->
                         val metadata = NutrientCatalog.byKey.getValue(key)
-                        val current = MealNutritionCalculator.nutrientValue(result.current, key)
-                        val proposed = MealNutritionCalculator.nutrientValue(result.meal, key)
-                        val projected = MealNutritionCalculator.nutrientValue(result.projected, key)
+                        val current = result.currentReport.value(key)
+                        val proposed = result.mealReport.value(key)
+                        val projected = result.projectedReport.value(key)
                         val target = result.progress.firstOrNull { it.nutrient == key }?.target
-                        val known = NutritionPresentation.isKnown(currentMeal, foods, key)
                         CompactForecastRow(
                             metadata = metadata,
                             current = current,
                             mealAmount = proposed,
                             projected = projected,
                             target = target,
-                            known = known,
                             selected = selected == key,
                             pinned = pinned == key,
                             onClick = { selected = if (selected == key) null else key },
@@ -77,8 +75,7 @@ fun ForecastScreen(viewModel: CookbookViewModel, onBack: () -> Unit) {
                         if (selected == key) {
                             NutrientContributionDetail(
                                 metadata = metadata,
-                                amount = proposed,
-                                known = known,
+                                value = proposed,
                                 target = target,
                                 contributions = MealNutritionCalculator.rankedContributions(currentMeal, foods, key, applyConsumedServingScale = true),
                                 pinned = pinned == key,
@@ -96,17 +93,16 @@ fun ForecastScreen(viewModel: CookbookViewModel, onBack: () -> Unit) {
 @Composable
 private fun CompactForecastRow(
     metadata: NutrientMetadata,
-    current: Double,
-    mealAmount: Double,
-    projected: Double,
+    current: NutrientValue,
+    mealAmount: NutrientValue,
+    projected: NutrientValue,
     target: Double?,
-    known: Boolean,
     selected: Boolean,
     pinned: Boolean,
     onClick: () -> Unit,
     onPin: () -> Unit
 ) {
-    val percent = if (known) NutritionPresentation.percent(projected, target) else null
+    val percent = if (projected.completeness == NutrientCompleteness.COMPLETE) NutritionPresentation.percent(projected.amount, target) else null
     Column(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 4.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -122,14 +118,20 @@ private fun CompactForecastRow(
             )
         }
         Text(
-            if (!known) "${formatNutrition(current)} → unknown projected amount"
-            else if (target == null) "${formatNutrition(current)} → ${formatNutrition(projected)} ${metadata.unit.symbol}"
-            else "${formatNutrition(current)} → ${formatNutrition(projected)} / ${formatNutrition(target)} ${metadata.unit.symbol}",
-            color = if (known) MaterialTheme.colorScheme.onSurface else Muted,
+            if (target == null || projected.completeness != NutrientCompleteness.COMPLETE) {
+                "${formatNutrientValue(current, metadata)} → ${formatNutrientValue(projected, metadata)}"
+            } else {
+                "${formatNutrientValue(current, metadata)} → ${formatNutrition(projected.amount)} / ${formatNutrition(target)} ${metadata.unit.symbol}"
+            },
+            color = if (projected.hasKnownValue) MaterialTheme.colorScheme.onSurface else Muted,
             style = MaterialTheme.typography.bodySmall
         )
-        Text(if (known) "+${formatNutrition(mealAmount)} ${metadata.unit.symbol} from meal" else "Meal contribution is incomplete", color = Muted, style = MaterialTheme.typography.labelSmall)
-        NutritionPresentation.progressFraction(projected, if (known) target else null)?.let { progress ->
+        Text(
+            if (mealAmount.hasKnownValue) "${formatNutrientValue(mealAmount, metadata)} from meal" else "Meal contribution unknown",
+            color = Muted,
+            style = MaterialTheme.typography.labelSmall
+        )
+        NutritionPresentation.progressFraction(projected.amount, if (projected.completeness == NutrientCompleteness.COMPLETE) target else null)?.let { progress ->
             LinearProgressIndicator(progress = { progress }, color = Herb, trackColor = Line, modifier = Modifier.fillMaxWidth().height(5.dp))
         }
         if (selected || pinned) HorizontalDivider(color = if (selected) Herb else Line, thickness = if (selected) 2.dp else 1.dp)

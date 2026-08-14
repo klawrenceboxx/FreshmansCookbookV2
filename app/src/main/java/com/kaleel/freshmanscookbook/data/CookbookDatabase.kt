@@ -154,6 +154,12 @@ class Converters {
 
     @TypeConverter fun nutritionGoalToString(value: NutritionGoal) = value.name
     @TypeConverter fun stringToNutritionGoal(value: String) = NutritionGoal.valueOf(value)
+
+    @TypeConverter fun waterUnitToString(value: WaterUnit) = value.name
+    @TypeConverter fun stringToWaterUnit(value: String) = WaterUnit.valueOf(value)
+
+    @TypeConverter fun waterDisplayUnitToString(value: WaterDisplayUnit) = value.name
+    @TypeConverter fun stringToWaterDisplayUnit(value: String) = WaterDisplayUnit.valueOf(value)
 }
 
 @Database(
@@ -169,9 +175,11 @@ class Converters {
         NutritionProfileEntity::class,
         MealLogEntity::class,
         MealLogIngredientEntity::class,
-        FoodLogEntity::class
+        FoodLogEntity::class,
+        WaterLogEntity::class,
+        HydrationPreferencesEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -182,6 +190,7 @@ abstract class CookbookDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
     abstract fun mealLogDao(): MealLogDao
     abstract fun foodLogDao(): FoodLogDao
+    abstract fun hydrationDao(): HydrationDao
 
     companion object {
         @Volatile
@@ -200,7 +209,8 @@ abstract class CookbookDatabase : RoomDatabase() {
                         MIGRATION_3_4,
                         MIGRATION_4_5,
                         MIGRATION_5_6,
-                        MIGRATION_6_7
+                        MIGRATION_6_7,
+                        MIGRATION_7_8
                     )
                     .build()
                     .also { instance = it }
@@ -467,6 +477,46 @@ abstract class CookbookDatabase : RoomDatabase() {
                     )"""
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_food_display_name_overrides_searchName` ON `food_display_name_overrides` (`searchName`)")
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val allNutrientsMask = NutrientKnowledgeMask.all
+                db.execSQL(
+                    "ALTER TABLE `meal_logs` ADD COLUMN `knownNutrientsMask` INTEGER NOT NULL DEFAULT $allNutrientsMask"
+                )
+                db.execSQL(
+                    "ALTER TABLE `meal_logs` ADD COLUMN `completeNutrientsMask` INTEGER NOT NULL DEFAULT $allNutrientsMask"
+                )
+                db.execSQL(
+                    "ALTER TABLE `food_logs` ADD COLUMN `knownNutrientsMask` INTEGER NOT NULL DEFAULT $allNutrientsMask"
+                )
+                db.execSQL(
+                    "ALTER TABLE `food_logs` ADD COLUMN `completeNutrientsMask` INTEGER NOT NULL DEFAULT $allNutrientsMask"
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `water_logs` (
+                        `id` TEXT NOT NULL,
+                        `amountMl` REAL NOT NULL,
+                        `enteredAmount` REAL NOT NULL,
+                        `enteredUnit` TEXT NOT NULL,
+                        `label` TEXT,
+                        `loggedAt` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )"""
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_water_logs_loggedAt` ON `water_logs` (`loggedAt`)"
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `hydration_preferences` (
+                        `id` INTEGER NOT NULL,
+                        `displayUnit` TEXT NOT NULL,
+                        `bottleMl` REAL,
+                        PRIMARY KEY(`id`)
+                    )"""
+                )
             }
         }
     }

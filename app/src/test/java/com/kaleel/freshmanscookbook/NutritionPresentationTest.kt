@@ -77,4 +77,55 @@ class NutritionPresentationTest {
 
         assertFalse(NutritionPresentation.isKnown(meal, mapOf(food.foodId to food), NutrientKey.PROTEIN))
     }
+
+    @Test
+    fun partialNutrientPreservesKnownSubtotal() {
+        val (_, food) = CustomFoodInput(
+            name = "Chia seeds",
+            servingQuantity = 100.0,
+            servingUnit = IngredientUnit.G,
+            nutrients = mapOf(NutrientKey.PROTEIN to 20.0)
+        ).toEntities(now = 1L)
+        val known = MealIngredient.quickAdd("Chia seeds", 10.0, IngredientUnit.G, 0, food.foodId, 10.0)
+        val unresolved = MealIngredient.quickAdd("Mystery powder", 1.0, IngredientUnit.SCOOP, 1, null, null)
+        val report = NutritionCompletenessCalculator.forMeal(
+            MealInstance("meal", null, "Pudding", 1, 1.0, listOf(known, unresolved), 1L),
+            mapOf(food.foodId to food)
+        )
+
+        assertEquals(2.0, report.value(NutrientKey.PROTEIN).amount, 0.001)
+        assertEquals(NutrientCompleteness.PARTIAL, report.value(NutrientKey.PROTEIN).completeness)
+    }
+
+    @Test
+    fun confirmedZeroIsCompleteAndDistinctFromUnknown() {
+        val (_, zeroFood) = CustomFoodInput(
+            name = "Zero protein drink",
+            servingQuantity = 100.0,
+            servingUnit = IngredientUnit.G,
+            nutrients = mapOf(NutrientKey.PROTEIN to 0.0)
+        ).toEntities(now = 1L)
+        val ingredient = MealIngredient.quickAdd(zeroFood.name, 100.0, IngredientUnit.G, 0, zeroFood.foodId, 100.0)
+        val report = NutritionCompletenessCalculator.forMeal(
+            MealInstance("meal", null, "Drink", 1, 1.0, listOf(ingredient), 1L),
+            mapOf(zeroFood.foodId to zeroFood)
+        )
+
+        assertEquals(0.0, report.value(NutrientKey.PROTEIN).amount, 0.0)
+        assertEquals(NutrientCompleteness.COMPLETE, report.value(NutrientKey.PROTEIN).completeness)
+        assertEquals(NutrientCompleteness.UNKNOWN, report.value(NutrientKey.MAGNESIUM).completeness)
+    }
+
+    @Test
+    fun removingLogRecalculatesAggregateWithoutSubtractingUiState() {
+        fun report(calories: Double) = NutritionCompletenessReport(
+            NutritionTotals(caloriesKcal = calories),
+            NutrientKey.entries.associateWith { NutrientCompleteness.COMPLETE }
+        )
+        val before = NutritionCompletenessCalculator.aggregate(listOf(report(300.0), report(125.0)))
+        val after = NutritionCompletenessCalculator.aggregate(listOf(report(300.0)))
+
+        assertEquals(425.0, before.totals.caloriesKcal, 0.0)
+        assertEquals(300.0, after.totals.caloriesKcal, 0.0)
+    }
 }

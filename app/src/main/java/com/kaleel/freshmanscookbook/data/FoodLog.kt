@@ -2,6 +2,7 @@ package com.kaleel.freshmanscookbook.data
 
 import androidx.room.Dao
 import androidx.room.Embedded
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.Insert
@@ -33,8 +34,17 @@ data class FoodLogEntity(
     val unit: IngredientUnit,
     val gramsEquivalent: Double,
     val loggedAt: Long,
+    @ColumnInfo(defaultValue = "4294967295") val knownNutrientsMask: Long,
+    @ColumnInfo(defaultValue = "4294967295") val completeNutrientsMask: Long,
     @Embedded val nutrition: NutritionTotals
-)
+) {
+    fun nutritionReport(): NutritionCompletenessReport =
+        NutritionCompletenessCalculator.fromPersisted(
+            totals = nutrition,
+            knownMask = knownNutrientsMask,
+            completeMask = completeNutrientsMask
+        )
+}
 
 /**
  * Input after the UI has selected a USDA food and resolved its entered amount
@@ -127,22 +137,7 @@ class FoodLogRepository(
             .firstOrNull()
             ?: error("Food ${draft.foodId} was not found in the local nutrition database.")
 
-        val temporaryIngredient = MealIngredient(
-            id = id,
-            sourceIngredientId = null,
-            name = draft.foodName.ifBlank { food.userFacingName },
-            quantity = draft.quantity,
-            unit = draft.unit,
-            order = 0,
-            foodId = food.foodId,
-            gramsEquivalent = draft.gramsEquivalent,
-            isChecked = true
-        )
-
-        val nutrition = MealNutritionCalculator.ingredientTotals(
-            ingredient = temporaryIngredient,
-            foodsById = mapOf(food.foodId to food)
-        )
+        val nutrition = NutritionCompletenessCalculator.forFood(food, draft.gramsEquivalent)
 
         val entity = FoodLogEntity(
             id = id,
@@ -152,7 +147,9 @@ class FoodLogRepository(
             unit = draft.unit,
             gramsEquivalent = draft.gramsEquivalent,
             loggedAt = draft.loggedAt,
-            nutrition = nutrition
+            knownNutrientsMask = nutrition.knownMask,
+            completeNutrientsMask = nutrition.completeMask,
+            nutrition = nutrition.totals
         )
 
         foodLogDao.insert(entity)

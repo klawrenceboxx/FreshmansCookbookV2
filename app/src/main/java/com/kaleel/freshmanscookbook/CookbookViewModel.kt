@@ -47,6 +47,7 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     private val mealLogRepository = cookbookApplication.mealLogRepository
     private val foodLogRepository = cookbookApplication.foodLogRepository
     private val dailyNutritionRepository = cookbookApplication.dailyNutritionRepository
+    private val hydrationRepository = cookbookApplication.hydrationRepository
     private val profileRepository = cookbookApplication.profileRepository
     val recipes = repository.recipes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _draft = MutableStateFlow(RecipeDraft())
@@ -63,7 +64,27 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        DailyNutritionSnapshot(dayBounds.value.start, dayBounds.value.end, emptyList(), emptyList(), NutritionTotals())
+        DailyNutritionSnapshot(
+            dayBounds.value.start,
+            dayBounds.value.end,
+            emptyList(),
+            emptyList(),
+            NutritionCompletenessCalculator.aggregate(emptyList())
+        )
+    )
+
+    val dailyHydration = dayBounds.flatMapLatest { bounds ->
+        hydrationRepository.observeBetween(bounds.start, bounds.end)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        HydrationDaySnapshot(
+            dayBounds.value.start,
+            dayBounds.value.end,
+            emptyList(),
+            0.0,
+            HydrationPreferencesEntity()
+        )
     )
 
     private val _meal = MutableStateFlow<MealInstance?>(null)
@@ -84,7 +105,7 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     val forecast = combine(dailyNutrition, _meal, _mealFoods, profileNutrition) { day, currentMeal, foods, profileState ->
-        currentMeal?.let { NutritionForecast.calculate(day.totals, it, foods, profileState?.targets) }
+        currentMeal?.let { NutritionForecast.calculate(day.nutrition, it, foods, profileState?.targets) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val pinnedContributions = combine(_meal, _mealFoods, _pinnedNutrient) { currentMeal, foods, nutrient ->
@@ -259,6 +280,34 @@ class CookbookViewModel(application: Application) : AndroidViewModel(application
             foodLogRepository.logFood(FoodLogDraft(food.foodId, food.userFacingName, quantity, unit, grams))
             refreshDay()
         }.isSuccess
+    }
+
+    fun deleteMealLog(id: String) {
+        viewModelScope.launch { mealLogRepository.delete(id) }
+    }
+
+    fun deleteFoodLog(id: String) {
+        viewModelScope.launch { foodLogRepository.delete(id) }
+    }
+
+    fun logWater(amount: Double, unit: WaterUnit, label: String? = null) {
+        viewModelScope.launch { hydrationRepository.log(amount, unit, label) }
+    }
+
+    fun logBottle() {
+        viewModelScope.launch { hydrationRepository.logBottle() }
+    }
+
+    fun deleteWaterLog(id: String) {
+        viewModelScope.launch { hydrationRepository.delete(id) }
+    }
+
+    fun setWaterDisplayUnit(unit: WaterDisplayUnit) {
+        viewModelScope.launch { hydrationRepository.setDisplayUnit(unit) }
+    }
+
+    fun setBottleAmount(amount: Double, unit: WaterUnit) {
+        viewModelScope.launch { hydrationRepository.setBottle(amount, unit) }
     }
 
     private suspend fun refreshMealFoods() {

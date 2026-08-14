@@ -8,6 +8,7 @@ import com.kaleel.freshmanscookbook.data.DailyNutritionRepository
 import com.kaleel.freshmanscookbook.data.MealLogRepository
 import com.kaleel.freshmanscookbook.data.ProfileRepository
 import com.kaleel.freshmanscookbook.data.RecipeRepository
+import com.kaleel.freshmanscookbook.data.HydrationRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ class CookbookApplication : Application() {
     val mealLogRepository by lazy { MealLogRepository(database) }
     val foodLogRepository by lazy { FoodLogRepository(database) }
     val dailyNutritionRepository by lazy { DailyNutritionRepository(database) }
+    val hydrationRepository by lazy { HydrationRepository(database) }
     val profileRepository by lazy { ProfileRepository(database) }
 
     override fun onCreate() {

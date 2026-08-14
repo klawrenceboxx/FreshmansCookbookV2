@@ -46,8 +46,12 @@ class MealLogRepository(
             "Checked measured ingredients must have an authoritative gram conversion before logging"
         }
         val foodsById = resolveFoods(meal)
-        val consumedNutrition =
-            MealNutritionCalculator.consumedTotals(meal, foodsById)
+        val consumedNutrition = NutritionCompletenessCalculator.forMeal(
+            meal = meal,
+            foodsById = foodsById,
+            checkedOnly = true,
+            applyConsumedServingScale = true
+        )
 
         val record = MealLogRecord.fromMeal(
             mealInstance = meal,

@@ -4,11 +4,15 @@ package com.kaleel.freshmanscookbook.data
  * Result of asking: "If I eat this meal, where will my day land?"
  */
 data class NutritionForecastResult(
-    val current: NutritionTotals,
-    val meal: NutritionTotals,
-    val projected: NutritionTotals,
+    val currentReport: NutritionCompletenessReport,
+    val mealReport: NutritionCompletenessReport,
+    val projectedReport: NutritionCompletenessReport,
     val progress: List<NutrientProgress>
-)
+) {
+    val current: NutritionTotals get() = currentReport.totals
+    val meal: NutritionTotals get() = mealReport.totals
+    val projected: NutritionTotals get() = projectedReport.totals
+}
 
 /**
  * Pure deterministic forecast logic.
@@ -24,36 +28,48 @@ object NutritionForecast {
         meal: MealInstance,
         foodsById: Map<String, FoodEntity>,
         targets: DailyNutritionTargets?
+    ): NutritionForecastResult = calculate(
+        current = NutritionCompletenessReport(
+            totals = current,
+            completeness = NutrientKey.entries.associateWith { NutrientCompleteness.COMPLETE }
+        ),
+        meal = meal,
+        foodsById = foodsById,
+        targets = targets
+    )
+
+    fun calculate(
+        current: NutritionCompletenessReport,
+        meal: MealInstance,
+        foodsById: Map<String, FoodEntity>,
+        targets: DailyNutritionTargets?
     ): NutritionForecastResult {
-        val plannedWholeRecipe =
-            MealNutritionCalculator.plannedTotals(meal, foodsById)
-
-        val proposedMeal = multiply(
-            plannedWholeRecipe,
-            meal.consumedServingScale()
+        val proposedMeal = NutritionCompletenessCalculator.forMeal(
+            meal = meal,
+            foodsById = foodsById,
+            applyConsumedServingScale = true
         )
-
-        val projected = add(current, proposedMeal)
+        val projected = NutritionCompletenessCalculator.aggregate(listOf(current, proposedMeal))
 
         val progress = NutrientCatalog.all.map { metadata ->
             NutrientProgress(
                 nutrient = metadata.key,
                 consumed = MealNutritionCalculator.nutrientValue(
-                    current,
+                    current.totals,
                     metadata.key
                 ),
                 target = targets?.get(metadata.key)?.amount,
                 projected = MealNutritionCalculator.nutrientValue(
-                    projected,
+                    projected.totals,
                     metadata.key
                 )
             )
         }
 
         return NutritionForecastResult(
-            current = current,
-            meal = proposedMeal,
-            projected = projected,
+            currentReport = current,
+            mealReport = proposedMeal,
+            projectedReport = projected,
             progress = progress
         )
     }

@@ -40,6 +40,7 @@ fun InteractiveNutritionLabel(
 ) {
     val secondary = NutrientCatalog.all.filter { it.key !in primaryNutrients }
     val selectedMeta = selected?.let(NutrientCatalog.byKey::get)
+    val completeness = NutritionCompletenessCalculator.forMeal(meal, foodsById)
     Surface(color = Paper, shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, Line), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -55,8 +56,10 @@ fun InteractiveNutritionLabel(
             primaryNutrients.forEachIndexed { index, key ->
                 NutritionLabelRow(
                     metadata = NutrientCatalog.byKey.getValue(key),
-                    amount = MealNutritionCalculator.nutrientValue(totals, key),
-                    known = NutritionPresentation.isKnown(meal, foodsById, key),
+                    value = NutrientValue(
+                        MealNutritionCalculator.nutrientValue(totals, key),
+                        completeness.value(key).completeness
+                    ),
                     selected = selected == key,
                     pinned = pinned == key,
                     prominent = index == 0,
@@ -64,19 +67,34 @@ fun InteractiveNutritionLabel(
                     onPin = { onPin(if (pinned == key) null else key) }
                 )
             }
+            val calories = completeness.value(NutrientKey.CALORIES)
             Text(
-                "${if (NutritionPresentation.isKnown(meal, foodsById, NutrientKey.CALORIES)) "Whole recipe" else "Known whole-recipe subtotal"}: ${formatNutrition(wholeRecipeCalories)} kcal",
+                when (calories.completeness) {
+                    NutrientCompleteness.COMPLETE -> "Whole recipe: ${formatNutrition(wholeRecipeCalories)} kcal"
+                    NutrientCompleteness.PARTIAL -> "Known whole-recipe subtotal: ${formatNutrition(wholeRecipeCalories)}+ kcal"
+                    NutrientCompleteness.UNKNOWN -> "Whole-recipe calories: Unknown"
+                },
                 color = Muted,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.padding(top = 7.dp, bottom = 2.dp)
             )
+            if (primaryNutrients.any { completeness.value(it).isPartial }) {
+                Text(
+                    "Known subtotal · some ingredient data unresolved",
+                    color = Muted,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(bottom = 3.dp)
+                )
+            }
             if (expanded) {
                 HorizontalDivider(Modifier.padding(top = 10.dp), color = MaterialTheme.colorScheme.onSurface, thickness = 2.dp)
                 secondary.forEach { metadata ->
                     NutritionLabelRow(
                         metadata = metadata,
-                        amount = MealNutritionCalculator.nutrientValue(totals, metadata.key),
-                        known = NutritionPresentation.isKnown(meal, foodsById, metadata.key),
+                        value = NutrientValue(
+                            MealNutritionCalculator.nutrientValue(totals, metadata.key),
+                            completeness.value(metadata.key).completeness
+                        ),
                         selected = selected == metadata.key,
                         pinned = pinned == metadata.key,
                         onSelect = { onSelect(metadata.key) },
@@ -92,8 +110,10 @@ fun InteractiveNutritionLabel(
             if (selectedMeta != null) {
                 NutrientContributionDetail(
                     metadata = selectedMeta,
-                    amount = MealNutritionCalculator.nutrientValue(totals, selectedMeta.key),
-                    known = NutritionPresentation.isKnown(meal, foodsById, selectedMeta.key),
+                    value = NutrientValue(
+                        MealNutritionCalculator.nutrientValue(totals, selectedMeta.key),
+                        completeness.value(selectedMeta.key).completeness
+                    ),
                     target = targets?.get(selectedMeta.key)?.amount,
                     contributions = MealNutritionCalculator.rankedContributions(meal, foodsById, selectedMeta.key, applyConsumedServingScale = true),
                     pinned = pinned == selectedMeta.key,
@@ -107,8 +127,7 @@ fun InteractiveNutritionLabel(
 @Composable
 private fun NutritionLabelRow(
     metadata: NutrientMetadata,
-    amount: Double,
-    known: Boolean,
+    value: NutrientValue,
     selected: Boolean,
     pinned: Boolean,
     prominent: Boolean = false,
@@ -124,8 +143,8 @@ private fun NutritionLabelRow(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                if (!known) "Unknown" else if (metadata.key == NutrientKey.CALORIES) formatNutrition(amount) else "${formatNutrition(amount)} ${metadata.unit.symbol}",
-                color = if (known) MaterialTheme.colorScheme.onSurface else Muted,
+                formatNutrientValue(value, metadata, includeCaloriesUnit = false),
+                color = if (value.hasKnownValue) MaterialTheme.colorScheme.onSurface else Muted,
                 style = if (prominent) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.bodyMedium,
                 fontWeight = if (prominent) FontWeight.Bold else FontWeight.Medium
             )
@@ -144,14 +163,13 @@ private fun NutritionLabelRow(
 @Composable
 fun NutrientContributionDetail(
     metadata: NutrientMetadata,
-    amount: Double,
-    known: Boolean,
+    value: NutrientValue,
     target: Double?,
     contributions: List<MealNutritionCalculator.IngredientContribution>,
     pinned: Boolean,
     onPin: () -> Unit
 ) {
-    val percent = if (known) NutritionPresentation.percent(amount, target) else null
+    val percent = if (value.completeness == NutrientCompleteness.COMPLETE) NutritionPresentation.percent(value.amount, target) else null
     Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(14.dp), modifier = Modifier.padding(top = 10.dp)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -159,9 +177,10 @@ fun NutrientContributionDetail(
                     Text(metadata.displayName, style = MaterialTheme.typography.titleMedium)
                     Text(
                         when {
-                            !known -> "Known subtotal ${formatNutrition(amount)} ${metadata.unit.symbol} · some data unknown"
-                            percent != null -> "${formatNutrition(amount)} ${metadata.unit.symbol} · $percent% of daily target"
-                            else -> "${formatNutrition(amount)} ${metadata.unit.symbol} · no target configured"
+                            value.completeness == NutrientCompleteness.UNKNOWN -> "No useful value is known · ingredient nutrition unresolved"
+                            value.completeness == NutrientCompleteness.PARTIAL -> "Known subtotal ${formatNutrition(value.amount)}+ ${metadata.unit.symbol} · some ingredient nutrition is unresolved"
+                            percent != null -> "${formatNutrition(value.amount)} ${metadata.unit.symbol} · $percent% of daily target"
+                            else -> "${formatNutrition(value.amount)} ${metadata.unit.symbol} · no target configured"
                         },
                         color = Muted,
                         style = MaterialTheme.typography.bodySmall
@@ -173,7 +192,7 @@ fun NutrientContributionDetail(
             }
             if (contributions.isEmpty()) Text("No resolved ingredient contributions are available.", color = Muted, style = MaterialTheme.typography.bodySmall)
             else {
-                Text(if (known) "Top contributors" else "Known contributors", style = MaterialTheme.typography.labelLarge)
+                Text(if (value.completeness == NutrientCompleteness.COMPLETE) "Top contributors" else "Known contributors", style = MaterialTheme.typography.labelLarge)
                 val largest = contributions.first().amount
                 contributions.take(5).forEach { contribution ->
                     Column {
@@ -205,13 +224,38 @@ fun NutritionValueRow(metadata: NutrientMetadata, amount: Double, target: Double
 }
 
 @Composable
-fun NutrientProgressRow(metadata: NutrientMetadata, consumed: Double, target: Double?) {
+fun NutrientProgressRow(metadata: NutrientMetadata, value: NutrientValue, target: Double?) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        NutritionValueRow(metadata, consumed, target)
-        NutritionPresentation.progressFraction(consumed, target)?.let { progress ->
+        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(metadata.displayName, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (target == null || value.completeness != NutrientCompleteness.COMPLETE) {
+                    formatNutrientValue(value, metadata)
+                } else {
+                    "${formatNutrition(value.amount)} / ${formatNutrition(target)} ${metadata.unit.symbol}"
+                },
+                color = if (value.hasKnownValue) Muted else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+        NutritionPresentation.progressFraction(
+            value.amount,
+            if (value.completeness == NutrientCompleteness.COMPLETE) target else null
+        )?.let { progress ->
             LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(5.dp), color = Herb, trackColor = MintWash)
         }
     }
+}
+
+fun formatNutrientValue(
+    value: NutrientValue,
+    metadata: NutrientMetadata,
+    includeCaloriesUnit: Boolean = true
+): String {
+    if (!value.hasKnownValue) return "Unknown"
+    val suffix = if (value.isPartial) "+" else ""
+    val unit = if (metadata.key == NutrientKey.CALORIES && !includeCaloriesUnit) "" else " ${metadata.unit.symbol}"
+    return "${formatNutrition(value.amount)}$suffix$unit"
 }
 
 @Composable

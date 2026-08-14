@@ -22,20 +22,13 @@ object NutritionPresentation {
         ?.takeIf { it > 0.0 }
         ?.let { (projected.coerceAtLeast(0.0) / it).coerceIn(0.0, 1.0).toFloat() }
 
-    /**
-     * A total is only presented as known when every planned ingredient has a
-     * gram amount and its source row reports this nutrient. USDA/custom nulls
-     * remain unknown instead of becoming a confident zero in the UI.
-     */
+    /** Compatibility helper for callers that only need complete/not-complete. */
     fun isKnown(
         meal: MealInstance,
         foodsById: Map<String, FoodEntity>,
         nutrient: NutrientKey
-    ): Boolean = meal.ingredients.isNotEmpty() && meal.ingredients.all { ingredient ->
-        val grams = ingredient.gramsEquivalent
-        val food = ingredient.foodId?.let(foodsById::get)
-        grams != null && grams >= 0.0 && food?.nutrientPer100g(nutrient) != null
-    }
+    ): Boolean = NutritionCompletenessCalculator.forMeal(meal, foodsById)
+        .value(nutrient).completeness == NutrientCompleteness.COMPLETE
 }
 
 fun FoodEntity.nutrientPer100g(nutrient: NutrientKey): Double? = when (nutrient) {

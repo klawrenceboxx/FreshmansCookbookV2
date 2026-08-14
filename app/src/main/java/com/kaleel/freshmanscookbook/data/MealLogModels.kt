@@ -1,6 +1,7 @@
 package com.kaleel.freshmanscookbook.data
 
 import androidx.room.Embedded
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -30,6 +31,8 @@ data class MealLogEntity(
     val servingsConsumed: Double,
     val startedAt: Long,
     val loggedAt: Long,
+    @ColumnInfo(defaultValue = "4294967295") val knownNutrientsMask: Long,
+    @ColumnInfo(defaultValue = "4294967295") val completeNutrientsMask: Long,
 
     val caloriesKcal: Double,
     val proteinG: Double,
@@ -109,10 +112,17 @@ data class MealLogEntity(
         cholesterolMg = cholesterolMg
     )
 
+    fun nutritionReport(): NutritionCompletenessReport =
+        NutritionCompletenessCalculator.fromPersisted(
+            totals = nutritionTotals(),
+            knownMask = knownNutrientsMask,
+            completeMask = completeNutrientsMask
+        )
+
     companion object {
         fun fromMeal(
             meal: MealInstance,
-            consumedNutrition: NutritionTotals,
+            consumedNutrition: NutritionCompletenessReport,
             loggedAt: Long = System.currentTimeMillis(),
             id: String = UUID.randomUUID().toString()
         ): MealLogEntity = MealLogEntity(
@@ -123,44 +133,46 @@ data class MealLogEntity(
             servingsConsumed = meal.servingsConsumed,
             startedAt = meal.startedAt,
             loggedAt = loggedAt,
+            knownNutrientsMask = consumedNutrition.knownMask,
+            completeNutrientsMask = consumedNutrition.completeMask,
 
-            caloriesKcal = consumedNutrition.caloriesKcal,
-            proteinG = consumedNutrition.proteinG,
-            carbohydrateG = consumedNutrition.carbohydrateG,
-            fatG = consumedNutrition.fatG,
-            fiberG = consumedNutrition.fiberG,
-            totalSugarsG = consumedNutrition.totalSugarsG,
+            caloriesKcal = consumedNutrition.totals.caloriesKcal,
+            proteinG = consumedNutrition.totals.proteinG,
+            carbohydrateG = consumedNutrition.totals.carbohydrateG,
+            fatG = consumedNutrition.totals.fatG,
+            fiberG = consumedNutrition.totals.fiberG,
+            totalSugarsG = consumedNutrition.totals.totalSugarsG,
 
-            calciumMg = consumedNutrition.calciumMg,
-            ironMg = consumedNutrition.ironMg,
-            magnesiumMg = consumedNutrition.magnesiumMg,
-            phosphorusMg = consumedNutrition.phosphorusMg,
-            potassiumMg = consumedNutrition.potassiumMg,
-            sodiumMg = consumedNutrition.sodiumMg,
-            zincMg = consumedNutrition.zincMg,
-            copperMg = consumedNutrition.copperMg,
-            manganeseMg = consumedNutrition.manganeseMg,
-            seleniumMcg = consumedNutrition.seleniumMcg,
+            calciumMg = consumedNutrition.totals.calciumMg,
+            ironMg = consumedNutrition.totals.ironMg,
+            magnesiumMg = consumedNutrition.totals.magnesiumMg,
+            phosphorusMg = consumedNutrition.totals.phosphorusMg,
+            potassiumMg = consumedNutrition.totals.potassiumMg,
+            sodiumMg = consumedNutrition.totals.sodiumMg,
+            zincMg = consumedNutrition.totals.zincMg,
+            copperMg = consumedNutrition.totals.copperMg,
+            manganeseMg = consumedNutrition.totals.manganeseMg,
+            seleniumMcg = consumedNutrition.totals.seleniumMcg,
 
-            vitaminAMcgRae = consumedNutrition.vitaminAMcgRae,
-            vitaminCMg = consumedNutrition.vitaminCMg,
-            vitaminDMcg = consumedNutrition.vitaminDMcg,
-            vitaminEMg = consumedNutrition.vitaminEMg,
-            vitaminKMcg = consumedNutrition.vitaminKMcg,
-            thiaminB1Mg = consumedNutrition.thiaminB1Mg,
-            riboflavinB2Mg = consumedNutrition.riboflavinB2Mg,
-            niacinB3Mg = consumedNutrition.niacinB3Mg,
-            pantothenicAcidB5Mg = consumedNutrition.pantothenicAcidB5Mg,
-            vitaminB6Mg = consumedNutrition.vitaminB6Mg,
-            folateMcg = consumedNutrition.folateMcg,
-            folateMcgDfe = consumedNutrition.folateMcgDfe,
-            vitaminB12Mcg = consumedNutrition.vitaminB12Mcg,
-            cholineMg = consumedNutrition.cholineMg,
+            vitaminAMcgRae = consumedNutrition.totals.vitaminAMcgRae,
+            vitaminCMg = consumedNutrition.totals.vitaminCMg,
+            vitaminDMcg = consumedNutrition.totals.vitaminDMcg,
+            vitaminEMg = consumedNutrition.totals.vitaminEMg,
+            vitaminKMcg = consumedNutrition.totals.vitaminKMcg,
+            thiaminB1Mg = consumedNutrition.totals.thiaminB1Mg,
+            riboflavinB2Mg = consumedNutrition.totals.riboflavinB2Mg,
+            niacinB3Mg = consumedNutrition.totals.niacinB3Mg,
+            pantothenicAcidB5Mg = consumedNutrition.totals.pantothenicAcidB5Mg,
+            vitaminB6Mg = consumedNutrition.totals.vitaminB6Mg,
+            folateMcg = consumedNutrition.totals.folateMcg,
+            folateMcgDfe = consumedNutrition.totals.folateMcgDfe,
+            vitaminB12Mcg = consumedNutrition.totals.vitaminB12Mcg,
+            cholineMg = consumedNutrition.totals.cholineMg,
 
-            saturatedFatG = consumedNutrition.saturatedFatG,
-            monounsaturatedFatG = consumedNutrition.monounsaturatedFatG,
-            polyunsaturatedFatG = consumedNutrition.polyunsaturatedFatG,
-            cholesterolMg = consumedNutrition.cholesterolMg
+            saturatedFatG = consumedNutrition.totals.saturatedFatG,
+            monounsaturatedFatG = consumedNutrition.totals.monounsaturatedFatG,
+            polyunsaturatedFatG = consumedNutrition.totals.polyunsaturatedFatG,
+            cholesterolMg = consumedNutrition.totals.cholesterolMg
         )
     }
 }
@@ -240,7 +252,7 @@ data class MealLogRecord(
     companion object {
         fun fromMeal(
             mealInstance: MealInstance,
-            consumedNutrition: NutritionTotals,
+            consumedNutrition: NutritionCompletenessReport,
             loggedAt: Long = System.currentTimeMillis()
         ): MealLogRecord {
             val mealLog = MealLogEntity.fromMeal(
